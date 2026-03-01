@@ -584,8 +584,29 @@ pub async fn run_with_secrets(
     info_only: bool,
     command: &[String],
 ) -> Result<()> {
-    if !search_by_uri && item_or_uri.is_none() && org_filter.is_none() && folder_filter.is_none() {
+    let requested_items: Vec<String> = if search_by_uri {
+        Vec::new()
+    } else {
+        item_or_uri
+            .map(|raw| {
+                raw.split(',')
+                    .map(|part| part.trim())
+                    .filter(|part| !part.is_empty())
+                    .map(|part| part.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    if !search_by_uri
+        && requested_items.is_empty()
+        && org_filter.is_none()
+        && folder_filter.is_none()
+    {
         anyhow::bail!("At least one of --credential-name, --org, or --folder must be specified.");
+    }
+    if !search_by_uri && item_or_uri.is_some() && requested_items.is_empty() {
+        anyhow::bail!("No credential names provided.");
     }
 
     let mut config = Config::load()?;
@@ -655,8 +676,41 @@ pub async fn run_with_secrets(
         true
     };
 
-    // Find the item
-    let output = if search_by_uri {
+    let find_by_name_or_id = |name_or_id: &str| -> Result<CipherOutput> {
+        // Search by ID first, then by name
+        let cipher_by_id = sync_response
+            .ciphers
+            .iter()
+            .find(|c| c.id == name_or_id && matches_filters(c));
+
+        if let Some(cipher) = cipher_by_id {
+            let keys = get_cipher_keys(&config, cipher)?;
+            return decrypt_cipher(cipher, keys);
+        }
+
+        let item_lower = name_or_id.to_lowercase();
+        let mut found: Option<CipherOutput> = None;
+
+        for cipher in &sync_response.ciphers {
+            if !matches_filters(cipher) {
+                continue;
+            }
+            let keys = match get_cipher_keys(&config, cipher) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if let Ok(output) = decrypt_cipher(cipher, keys) {
+                if output.name.to_lowercase() == item_lower {
+                    found = Some(output);
+                    break;
+                }
+            }
+        }
+        found.context(format!("Item '{}' not found", name_or_id))
+    };
+
+    // Find matching items
+    let outputs: Vec<CipherOutput> = if search_by_uri {
         let uri = item_or_uri.expect("URI required for URI search");
         let uri_lower = uri.to_lowercase();
         let mut found: Option<CipherOutput> = None;
@@ -678,38 +732,12 @@ pub async fn run_with_secrets(
                 }
             }
         }
-        found.context(format!("No item found with URI containing '{}'", uri))?
-    } else if let Some(name_or_id) = item_or_uri {
-        // Search by ID first, then by name
-        let cipher_by_id = sync_response
-            .ciphers
+        vec![found.context(format!("No item found with URI containing '{}'", uri))?]
+    } else if !requested_items.is_empty() {
+        requested_items
             .iter()
-            .find(|c| c.id == name_or_id && matches_filters(c));
-
-        if let Some(cipher) = cipher_by_id {
-            let keys = get_cipher_keys(&config, cipher)?;
-            decrypt_cipher(cipher, keys)?
-        } else {
-            let item_lower = name_or_id.to_lowercase();
-            let mut found: Option<CipherOutput> = None;
-
-            for cipher in &sync_response.ciphers {
-                if !matches_filters(cipher) {
-                    continue;
-                }
-                let keys = match get_cipher_keys(&config, cipher) {
-                    Ok(k) => k,
-                    Err(_) => continue,
-                };
-                if let Ok(output) = decrypt_cipher(cipher, keys) {
-                    if output.name.to_lowercase() == item_lower {
-                        found = Some(output);
-                        break;
-                    }
-                }
-            }
-            found.context(format!("Item '{}' not found", name_or_id))?
-        }
+            .map(|name| find_by_name_or_id(name))
+            .collect::<Result<Vec<_>>>()?
     } else {
         // No name specified — return the first item matching org/folder filters
         let mut found: Option<CipherOutput> = None;
@@ -727,11 +755,14 @@ pub async fn run_with_secrets(
                 break;
             }
         }
-        found.context("No item found matching the specified filters")?
+        vec![found.context("No item found matching the specified filters")?]
     };
 
-    // Build environment variables from the cipher
-    let env_vars = cipher_to_env_vars(&output);
+    // Build environment variables from the ciphers
+    let mut env_vars = Vec::new();
+    for output in outputs {
+        env_vars.extend(cipher_to_env_vars(&output));
+    }
 
     // If --info flag, just print variable names
     if info_only {

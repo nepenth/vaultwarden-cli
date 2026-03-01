@@ -92,7 +92,7 @@ enum Commands {
 
     /// Run a command with secrets injected as environment variables
     Run {
-        /// Item name or ID to inject
+        /// Item name or ID to inject (comma-separated for multiple)
         #[arg(long)]
         credential_name: Option<String>,
 

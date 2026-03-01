@@ -3,7 +3,8 @@ name = "vaultwarden-cli"
 version = "0.1.1"
 edition = "2021"
 description = "CLI client for Vaultwarden - retrieve secrets for batch files and environment variables"
-authors = ["Vaultwarden CLI Contributors"]
+authors = ["Haydon Ryan", "AI coders and agents"]
+license = "MIT"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive", "env"] }
