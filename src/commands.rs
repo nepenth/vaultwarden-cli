@@ -1247,6 +1247,115 @@ mod tests {
         }
     }
 
+    mod filter_resolution_tests {
+        use super::*;
+        use crate::models::{Collection, Organization, Profile};
+
+        fn make_profile(orgs: Vec<Organization>) -> Profile {
+            Profile {
+                id: "user-1".to_string(),
+                email: "user@example.com".to_string(),
+                name: Some("Test User".to_string()),
+                key: None,
+                private_key: None,
+                organizations: orgs,
+            }
+        }
+
+        #[test]
+        fn test_resolve_org_id_matches_exact_id() {
+            let profile = make_profile(vec![Organization {
+                id: "org-123".to_string(),
+                name: Some("Engineering".to_string()),
+                key: None,
+            }]);
+
+            let org_id = resolve_org_id(&profile, "org-123").unwrap();
+            assert_eq!(org_id, "org-123");
+        }
+
+        #[test]
+        fn test_resolve_org_id_matches_name_case_insensitively() {
+            let profile = make_profile(vec![Organization {
+                id: "org-123".to_string(),
+                name: Some("Engineering".to_string()),
+                key: None,
+            }]);
+
+            let org_id = resolve_org_id(&profile, "engineering").unwrap();
+            assert_eq!(org_id, "org-123");
+        }
+
+        #[test]
+        fn test_resolve_org_id_errors_when_missing() {
+            let profile = make_profile(vec![Organization {
+                id: "org-123".to_string(),
+                name: Some("Engineering".to_string()),
+                key: None,
+            }]);
+
+            let err = resolve_org_id(&profile, "sales").unwrap_err();
+            assert!(err.to_string().contains("Organization 'sales' not found"));
+        }
+
+        #[test]
+        fn test_cipher_matches_filters_allows_no_filters() {
+            let cipher = Cipher {
+                id: "cipher-1".to_string(),
+                r#type: 1,
+                organization_id: Some("org-1".to_string()),
+                name: None,
+                notes: None,
+                folder_id: None,
+                login: None,
+                card: None,
+                identity: None,
+                secure_note: None,
+                collection_ids: vec!["col-1".to_string()],
+                fields: None,
+                data: None,
+            };
+
+            assert!(cipher_matches_filters(&cipher, None, None));
+        }
+
+        #[test]
+        fn test_cipher_matches_filters_checks_org_and_collection() {
+            let cipher = Cipher {
+                id: "cipher-1".to_string(),
+                r#type: 1,
+                organization_id: Some("org-1".to_string()),
+                name: None,
+                notes: None,
+                folder_id: None,
+                login: None,
+                card: None,
+                identity: None,
+                secure_note: None,
+                collection_ids: vec!["col-1".to_string(), "col-2".to_string()],
+                fields: None,
+                data: None,
+            };
+
+            assert!(cipher_matches_filters(&cipher, Some("org-1"), Some("col-2")));
+            assert!(!cipher_matches_filters(&cipher, Some("org-2"), Some("col-2")));
+            assert!(!cipher_matches_filters(&cipher, Some("org-1"), Some("col-9")));
+        }
+
+        #[test]
+        fn test_resolve_collection_id_matches_exact_id() {
+            let collection = Collection {
+                id: "col-1".to_string(),
+                name: "ignored".to_string(),
+                organization_id: "org-1".to_string(),
+            };
+
+            let config = Config::default();
+            let collection_id = resolve_collection_id(&[collection], "col-1", None, &config).unwrap();
+            assert_eq!(collection_id, "col-1");
+        }
+    }
+
     // Tests for decrypt_cipher helper
     mod decrypt_cipher_tests {
         use super::*;
