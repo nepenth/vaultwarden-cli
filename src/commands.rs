@@ -1535,4 +1535,82 @@ mod tests {
                 .contains("No decryption keys"));
         }
     }
+
+    mod output_helper_tests {
+        use super::*;
+
+        fn sample_output() -> CipherOutput {
+            CipherOutput {
+                id: "cipher-1".to_string(),
+                cipher_type: "login".to_string(),
+                name: "My App".to_string(),
+                username: Some("user".to_string()),
+                password: Some("pass".to_string()),
+                uri: Some("https://example.com".to_string()),
+                notes: None,
+                fields: Some(vec![
+                    FieldOutput {
+                        name: "api token".to_string(),
+                        value: "tok-123".to_string(),
+                        hidden: true,
+                    },
+                    FieldOutput {
+                        name: "region".to_string(),
+                        value: "us-east-1".to_string(),
+                        hidden: false,
+                    },
+                ]),
+            }
+        }
+
+        #[test]
+        fn test_resolve_component_errors_for_missing_standard_field() {
+            let output = CipherOutput {
+                username: None,
+                ..sample_output()
+            };
+
+            let err = resolve_component(&output, "username").unwrap_err();
+            assert!(err.to_string().contains("Item has no username"));
+        }
+
+        #[test]
+        fn test_resolve_component_errors_for_unknown_custom_field() {
+            let err = resolve_component(&sample_output(), "missing-field").unwrap_err();
+            assert!(err.to_string().contains("Item has no component 'missing-field'"));
+        }
+
+        #[test]
+        fn test_cipher_to_env_vars_includes_standard_and_custom_fields() {
+            let vars = cipher_to_env_vars(&sample_output());
+
+            assert_eq!(
+                vars,
+                vec![
+                    (
+                        "MY_APP_URI".to_string(),
+                        "https://example.com".to_string()
+                    ),
+                    ("MY_APP_USERNAME".to_string(), "user".to_string()),
+                    ("MY_APP_PASSWORD".to_string(), "pass".to_string()),
+                    ("MY_APP_API_TOKEN".to_string(), "tok-123".to_string()),
+                    ("MY_APP_REGION".to_string(), "us-east-1".to_string()),
+                ]
+            );
+        }
+
+        #[test]
+        fn test_cipher_to_env_vars_skips_absent_standard_fields() {
+            let output = CipherOutput {
+                username: None,
+                password: None,
+                uri: None,
+                fields: None,
+                ..sample_output()
+            };
+
+            let vars = cipher_to_env_vars(&output);
+            assert!(vars.is_empty());
+        }
+    }
 }
