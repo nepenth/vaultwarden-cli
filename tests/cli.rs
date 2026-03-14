@@ -1,0 +1,74 @@
+mod support;
+
+use predicates::prelude::*;
+use support::TestContext;
+
+#[test]
+fn login_reads_client_credentials_from_environment() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("login")
+        .arg("--server")
+        .arg("http://127.0.0.1:9")
+        .env("VAULTWARDEN_CLIENT_ID", "env-client")
+        .env("VAULTWARDEN_CLIENT_SECRET", "env-secret")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Failed to check server status"));
+}
+
+#[test]
+fn get_uri_subcommand_name_parses() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("get-uri")
+        .arg("example.com")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
+fn run_uri_subcommand_name_parses() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run-uri")
+        .arg("example.com")
+        .arg("--")
+        .arg("env")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
+fn run_accepts_credential_name_alias() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run")
+        .arg("--credential-name")
+        .arg("My App")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
+fn run_parses_trailing_command_after_double_dash() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run")
+        .arg("--name")
+        .arg("My App")
+        .arg("--")
+        .arg("echo")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
