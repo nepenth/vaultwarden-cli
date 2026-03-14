@@ -140,3 +140,76 @@ async fn api_client_login_reports_malformed_json() {
 
     assert!(err.to_string().contains("Failed to parse token response"));
 }
+
+#[tokio::test]
+async fn api_client_refresh_token_sends_expected_form_fields() {
+    let mock_server = MockServer::start().await;
+    let response = serde_json::json!({
+        "access_token": "new-access-token",
+        "expires_in": 1800,
+        "token_type": "Bearer",
+        "refresh_token": "new-refresh-token"
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/identity/connect/token"))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .and(body_string_contains("refresh_token=old-refresh-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = ApiClient::new(&mock_server.uri()).unwrap();
+    let token = client.refresh_token("old-refresh-token").await.unwrap();
+
+    assert_eq!(token.access_token, "new-access-token");
+    assert_eq!(token.refresh_token.as_deref(), Some("new-refresh-token"));
+    assert_eq!(token.expires_in, 1800);
+}
+
+#[tokio::test]
+async fn api_client_refresh_token_surfaces_non_success_responses() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/identity/connect/token"))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_string("{\"error\":\"invalid_token\"}"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = ApiClient::new(&mock_server.uri()).unwrap();
+    let err = client
+        .refresh_token("expired-refresh-token")
+        .await
+        .err()
+        .expect("refresh should fail");
+
+    let message = err.to_string();
+    assert!(message.contains("Token refresh failed (401 Unauthorized)"));
+    assert!(message.contains("invalid_token"));
+}
+
+#[tokio::test]
+async fn api_client_refresh_token_reports_malformed_json() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/identity/connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = ApiClient::new(&mock_server.uri()).unwrap();
+    let err = client
+        .refresh_token("refresh-token")
+        .await
+        .err()
+        .expect("parse should fail");
+
+    assert!(err.to_string().contains("Failed to parse token response"));
+}
