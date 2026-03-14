@@ -1249,7 +1249,14 @@ mod tests {
 
     mod filter_resolution_tests {
         use super::*;
+        use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
         use crate::models::{Collection, Organization, Profile};
+        use cbc::Encryptor;
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        type Aes256CbcEnc = Encryptor<aes::Aes256>;
 
         fn make_profile(orgs: Vec<Organization>) -> Profile {
             Profile {
@@ -1260,6 +1267,31 @@ mod tests {
                 private_key: None,
                 organizations: orgs,
             }
+        }
+
+        fn encrypt_for_test(plaintext: &str, keys: &CryptoKeys) -> String {
+            let iv: Vec<u8> = (64u8..80).collect();
+            let mut buf = plaintext.as_bytes().to_vec();
+            let msg_len = buf.len();
+            buf.resize(msg_len + 16, 0);
+
+            let ciphertext = Aes256CbcEnc::new_from_slices(&keys.enc_key, &iv)
+                .unwrap()
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
+                .unwrap()
+                .to_vec();
+
+            let mut hmac = Hmac::<Sha256>::new_from_slice(&keys.mac_key).unwrap();
+            hmac.update(&iv);
+            hmac.update(&ciphertext);
+            let mac = hmac.finalize().into_bytes();
+
+            format!(
+                "2.{}|{}|{}",
+                BASE64.encode(&iv),
+                BASE64.encode(&ciphertext),
+                BASE64.encode(mac)
+            )
         }
 
         #[test]
@@ -1353,6 +1385,48 @@ mod tests {
             let config = Config::default();
             let collection_id = resolve_collection_id(&[collection], "col-1", None, &config).unwrap();
             assert_eq!(collection_id, "col-1");
+        }
+
+        #[test]
+        fn test_resolve_collection_id_matches_decrypted_name_with_org_scope() {
+            let org_keys = CryptoKeys {
+                enc_key: vec![1u8; 32],
+                mac_key: vec![2u8; 32],
+            };
+            let mut config = Config::default();
+            config
+                .org_crypto_keys
+                .insert("org-1".to_string(), org_keys.clone());
+
+            let collections = vec![
+                Collection {
+                    id: "col-ignored".to_string(),
+                    name: encrypt_for_test("Shared", &org_keys),
+                    organization_id: "org-2".to_string(),
+                },
+                Collection {
+                    id: "col-1".to_string(),
+                    name: encrypt_for_test("Shared", &org_keys),
+                    organization_id: "org-1".to_string(),
+                },
+            ];
+
+            let collection_id =
+                resolve_collection_id(&collections, "shared", Some("org-1"), &config).unwrap();
+            assert_eq!(collection_id, "col-1");
+        }
+
+        #[test]
+        fn test_resolve_collection_id_errors_without_matching_decrypted_name() {
+            let config = Config::default();
+            let collections = vec![Collection {
+                id: "col-1".to_string(),
+                name: "2.unreadable".to_string(),
+                organization_id: "org-1".to_string(),
+            }];
+
+            let err = resolve_collection_id(&collections, "missing", None, &config).unwrap_err();
+            assert!(err.to_string().contains("Collection 'missing' not found"));
         }
     }
 
