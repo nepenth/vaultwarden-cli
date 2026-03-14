@@ -295,3 +295,33 @@ async fn api_client_sync_reports_malformed_json() {
 
     assert!(err.to_string().contains("Failed to parse sync response"));
 }
+
+#[tokio::test]
+async fn api_client_check_server_returns_false_for_non_success_status() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/alive"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = ApiClient::new(&mock_server.uri()).unwrap();
+    let is_alive = client.check_server().await.unwrap();
+
+    assert!(!is_alive);
+}
+
+#[tokio::test]
+async fn api_client_check_server_reports_transport_errors() {
+    let client = ApiClient::new("http://127.0.0.1:9").unwrap();
+
+    let err = client
+        .check_server()
+        .await
+        .err()
+        .expect("transport should fail");
+
+    assert!(err.to_string().contains("Failed to check server status"));
+}
