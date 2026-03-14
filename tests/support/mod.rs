@@ -55,7 +55,19 @@ impl TestContext {
     }
 
     pub fn config_dir(&self) -> PathBuf {
-        self.config_root().join("vaultwarden-cli")
+        #[cfg(target_os = "macos")]
+        {
+            return self
+                .home_dir()
+                .join("Library")
+                .join("Application Support")
+                .join("com.vaultwarden.vaultwarden-cli");
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.config_root().join("vaultwarden-cli")
+        }
     }
 
     pub fn config_path(&self) -> PathBuf {
