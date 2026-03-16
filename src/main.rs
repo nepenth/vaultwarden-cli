@@ -31,8 +31,8 @@ enum Commands {
 
     /// Unlock the vault with master password
     Unlock {
-        /// Master password (will prompt if not provided)
-        #[arg(short, long)]
+        /// Master password (falls back to VAULTWARDEN_PASSWORD, then prompts)
+        #[arg(short, long, env = "VAULTWARDEN_PASSWORD")]
         password: Option<String>,
     },
 

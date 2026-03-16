@@ -673,11 +673,11 @@ pub async fn get_by_uri(
 }
 
 fn parse_placeholder(placeholder: &str) -> Result<(String, String)> {
-    let mut parts = placeholder.rsplitn(2, '.');
+    let mut parts = placeholder.rsplitn(2, '/');
     let component = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default();
     if name.is_empty() || component.is_empty() {
-        anyhow::bail!("Expected format name.component");
+        anyhow::bail!("Expected format name/component");
     }
     Ok((name.to_string(), component.to_string()))
 }
@@ -1200,23 +1200,23 @@ mod tests {
 
         #[test]
         fn test_parse_placeholder_valid() {
-            let (name, component) = parse_placeholder("s3.username").unwrap();
+            let (name, component) = parse_placeholder("s3/username").unwrap();
             assert_eq!(name, "s3");
             assert_eq!(component, "username");
         }
 
         #[test]
-        fn test_parse_placeholder_uses_last_dot() {
-            let (name, component) = parse_placeholder("path.to.s3.token").unwrap();
-            assert_eq!(name, "path.to.s3");
+        fn test_parse_placeholder_uses_last_slash() {
+            let (name, component) = parse_placeholder("path/to/s3/token").unwrap();
+            assert_eq!(name, "path/to/s3");
             assert_eq!(component, "token");
         }
 
         #[test]
         fn test_parse_placeholder_invalid() {
             assert!(parse_placeholder("s3").is_err());
-            assert!(parse_placeholder("s3.").is_err());
-            assert!(parse_placeholder(".username").is_err());
+            assert!(parse_placeholder("s3/").is_err());
+            assert!(parse_placeholder("/username").is_err());
         }
 
         #[test]

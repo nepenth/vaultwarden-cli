@@ -144,6 +144,16 @@ pub fn test_crypto_keys() -> CryptoKeys {
     }
 }
 
+pub fn encrypted_user_key(password: &str, email: &str, iterations: u32, keys: &CryptoKeys) -> String {
+    let master_key = CryptoKeys::derive_master_key(password, email, iterations);
+    let stretched = CryptoKeys::stretch_master_key(&master_key).expect("stretch master key");
+
+    let mut symmetric_key = keys.enc_key.clone();
+    symmetric_key.extend_from_slice(&keys.mac_key);
+
+    encrypt_bytes_for_test(&symmetric_key, &stretched.enc_key, &stretched.mac_key)
+}
+
 pub fn encrypt_string_for_test(plaintext: &str, keys: &CryptoKeys) -> String {
     encrypt_bytes_for_test(plaintext.as_bytes(), &keys.enc_key, &keys.mac_key)
 }
