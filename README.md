@@ -152,7 +152,7 @@ Environment variables are named `{ITEM_NAME}_{FIELD}` where:
 
 ### Interpolating YAML
 
-Replace placeholders like `((s3/username))` in a YAML file with Vaultwarden secrets and write to stdout.
+Replace placeholders like `((s3.username))` in a YAML file with Vaultwarden secrets and write to stdout.
 
 ```bash
 # Replace placeholders and write to a new file
@@ -162,7 +162,7 @@ vaultwarden-cli interpolate --file config.yml > config.rendered.yml
 vaultwarden-cli interpolate --file config.yml --skip-missing
 ```
 
-Placeholders use the format `((name/component))` where:
+Placeholders use the format `((name.component))` where:
 - `name` matches a Vaultwarden item name (case-insensitive)
 - `component` is `username`, `password`, `uri`, or a custom field name such as `token`
 
