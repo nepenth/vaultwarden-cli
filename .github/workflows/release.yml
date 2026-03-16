@@ -1,10 +1,16 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main, master]
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag to publish
+        required: true
+        type: string
+      release_sha:
+        description: Commit SHA to build and release
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -16,68 +22,33 @@ env:
   BINARY_NAME: vaultwarden-cli
 
 jobs:
-  detect-release-tag:
-    name: Detect Release Tag
-    if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.detect.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0
-
-      - name: Fetch tags
-        run: git fetch --force --tags
-
-      - name: Detect release tag
-        id: detect
-        run: |
-          tag=$(git tag --points-at "${{ github.event.workflow_run.head_sha }}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
   Build:
     name: Build (${{ matrix.target }})
-    needs: detect-release-tag
-    if: needs.detect-release-tag.outputs.tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
-
-          # Linux x86_64 musl
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             archive: tar.gz
             cross: true
-
-          # Linux ARM64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
             cross: true
-
-          # macOS x86_64
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
-
-          # macOS ARM64 (Apple Silicon)
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-
-          # Windows x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
-
-          # Windows ARM64
           - target: aarch64-pc-windows-msvc
             os: windows-latest
             archive: zip
@@ -85,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.release_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -140,13 +111,11 @@ jobs:
 
   SBOM:
     name: Generate SBOM
-    needs: detect-release-tag
-    if: needs.detect-release-tag.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.release_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -171,16 +140,15 @@ jobs:
 
   Release:
     name: Create Release
-    needs: [detect-release-tag, Build, SBOM]
+    needs: [Build, SBOM]
     runs-on: ubuntu-latest
-    if: needs.detect-release-tag.outputs.tag != ''
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.release_sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8
@@ -204,7 +172,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.detect-release-tag.outputs.tag }}
-          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ inputs.release_sha }}
           files: |
             release/*

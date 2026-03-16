@@ -83,6 +83,36 @@ jobs:
         with:
           command: check all
 
+  detect-release-tag:
+    name: Detect Release Tag
+    runs-on: ubuntu-latest
+    needs: [check, test, Lint, Security]
+    if: github.event_name == 'push'
+    outputs:
+      tag: ${{ steps.detect.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --force --tags
+      - name: Detect release tag
+        id: detect
+        run: |
+          tag=$(git tag --points-at "${GITHUB_SHA}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: [detect-release-tag]
+    if: needs.detect-release-tag.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      release_tag: ${{ needs.detect-release-tag.outputs.tag }}
+      release_sha: ${{ github.sha }}
+
   auto-merge:
     name: Auto-merge Dependabot PRs
     runs-on: ubuntu-latest
