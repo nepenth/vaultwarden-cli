@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main, master]
 
 permissions:
   contents: write
@@ -15,83 +16,30 @@ env:
   BINARY_NAME: vaultwarden-cli
 
 jobs:
-  Test:
-    name: Test
-    strategy:
-      matrix:
-        #os: ["ubuntu-latest", "windows-latest", "macos-latest"]
-        os: ["ubuntu-latest", "macos-latest"]
-        rust: ["stable", "beta"]
-        include:
-          - os: ubuntu-latest
-            rust: "nightly"
-    runs-on: ${{ matrix.os }}
+  detect-release-tag:
+    name: Detect Release Tag
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.detect.outputs.tag }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v6
         with:
-          toolchain: ${{ matrix.rust }}
-      - name: Print Cargo Version
-        run: cargo -V
-      - name: Default features
-        run: cargo test --workspace
-      - name: All features
-        run: cargo test --workspace --all-features
-      - name: No-default features
-        run: cargo test --workspace --no-default-features
-  Lint:
-    name: Lint
-    strategy:
-      matrix:
-        #os: ["ubuntu-latest", "windows-latest", "macos-latest"]
-        include:
-          - os: ubuntu-latest
-            rust: "stable"
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: clippy, rustfmt
-      - name: Print Cargo Version
-        run: cargo -V
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-  Security:
-    name: Audit
-    strategy:
-      matrix:
-        #os: ["ubuntu-latest", "windows-latest", "macos-latest"]
-        include:
-          - os: ubuntu-latest
-            rust: "stable"
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-      - name: Print Cargo Version
-        run: cargo -V
-      - name: Security Check
-        run: cargo audit
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check bans sources advisories
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags
+
+      - name: Detect release tag
+        id: detect
+        run: |
+          tag=$(git tag --points-at "${{ github.event.workflow_run.head_sha }}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
   Build:
     name: Build (${{ matrix.target }})
-    needs: [Test, Lint, Security]
+    needs: detect-release-tag
+    if: needs.detect-release-tag.outputs.tag != ''
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -136,6 +84,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -190,10 +140,13 @@ jobs:
 
   SBOM:
     name: Generate SBOM
-    needs: [Test, Lint, Security]
+    needs: detect-release-tag
+    if: needs.detect-release-tag.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -218,14 +171,16 @@ jobs:
 
   Release:
     name: Create Release
-    needs: [Build, SBOM]
+    needs: [detect-release-tag, Build, SBOM]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: needs.detect-release-tag.outputs.tag != ''
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8
@@ -249,5 +204,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.detect-release-tag.outputs.tag }}
+          target_commitish: ${{ github.event.workflow_run.head_sha }}
           files: |
             release/*
