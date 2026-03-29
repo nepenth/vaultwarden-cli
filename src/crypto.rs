@@ -658,4 +658,108 @@ mod tests {
             assert!(result.is_err());
         }
     }
+
+    mod rsa_roundtrip_tests {
+        use super::*;
+        use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+        use cbc::Encryptor;
+        use hmac::{Hmac, Mac};
+        use rsa::pkcs8::EncodePrivateKey;
+        use rsa::rand_core::OsRng;
+        use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
+        use sha2::Sha256;
+
+        type Aes256CbcEnc = Encryptor<aes::Aes256>;
+
+        fn encrypt_bytes_for_test(plaintext: &[u8], enc_key: &[u8], mac_key: &[u8]) -> String {
+            let iv: Vec<u8> = (64u8..80).collect();
+            let mut buf = plaintext.to_vec();
+            let msg_len = buf.len();
+            buf.resize(msg_len + 16, 0);
+
+            let ciphertext = Aes256CbcEnc::new_from_slices(enc_key, &iv)
+                .unwrap()
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
+                .unwrap()
+                .to_vec();
+
+            let mut hmac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
+            hmac.update(&iv);
+            hmac.update(&ciphertext);
+            let mac = hmac.finalize().into_bytes();
+
+            format!(
+                "2.{}|{}|{}",
+                BASE64.encode(&iv),
+                BASE64.encode(&ciphertext),
+                BASE64.encode(mac)
+            )
+        }
+
+        #[test]
+        fn test_decrypt_rsa_type4_success() {
+            let mut rng = OsRng;
+            let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+            let public_key = RsaPublicKey::from(&private_key);
+
+            let plaintext = b"secret data";
+            let padding = Oaep::new::<Sha1>();
+            let encrypted = public_key.encrypt(&mut rng, padding, plaintext).unwrap();
+            let encrypted_str = format!("4.{}", BASE64.encode(&encrypted));
+
+            let decrypted = CryptoKeys::decrypt_rsa(&encrypted_str, &private_key).unwrap();
+            assert_eq!(decrypted, plaintext);
+        }
+
+        #[test]
+        fn test_decrypt_rsa_type6_success() {
+            let mut rng = OsRng;
+            let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+            let public_key = RsaPublicKey::from(&private_key);
+
+            let plaintext = b"secret data";
+            let padding = Oaep::new::<Sha256>();
+            let encrypted = public_key.encrypt(&mut rng, padding, plaintext).unwrap();
+            let encrypted_str = format!("6.{}", BASE64.encode(&encrypted));
+
+            let decrypted = CryptoKeys::decrypt_rsa(&encrypted_str, &private_key).unwrap();
+            assert_eq!(decrypted, plaintext);
+        }
+
+        #[test]
+        fn test_decrypt_private_key_success() {
+            let mut rng = OsRng;
+            let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+            let der = private_key.to_pkcs8_der().unwrap().as_bytes().to_vec();
+
+            let keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+
+            let encrypted = encrypt_bytes_for_test(&der, &keys.enc_key, &keys.mac_key);
+            let decrypted_key = keys.decrypt_private_key(&encrypted).unwrap();
+
+            // Verify the decrypted key is valid by re-exporting it
+            let _ = decrypted_key.to_pkcs8_der().unwrap();
+        }
+
+        #[test]
+        fn test_decrypt_org_key_success() {
+            let mut rng = OsRng;
+            let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+            let public_key = RsaPublicKey::from(&private_key);
+
+            let org_plaintext: Vec<u8> = (0..64).collect();
+            let padding = Oaep::new::<Sha256>();
+            let encrypted = public_key
+                .encrypt(&mut rng, padding, &org_plaintext)
+                .unwrap();
+            let encrypted_str = format!("6.{}", BASE64.encode(&encrypted));
+
+            let org_keys = CryptoKeys::decrypt_org_key(&encrypted_str, &private_key).unwrap();
+            assert_eq!(org_keys.enc_key, org_plaintext[0..32]);
+            assert_eq!(org_keys.mac_key, org_plaintext[32..64]);
+        }
+    }
 }
