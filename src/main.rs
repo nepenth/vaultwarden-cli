@@ -284,29 +284,26 @@ mod tests {
             "--server",
             "https://example.com",
         ]);
-        match cli.command {
-            Commands::Login {
-                server,
-                client_id,
-                client_secret,
-            } => {
-                assert_eq!(server, Some("https://example.com".to_string()));
-                assert_eq!(client_id, None);
-                assert_eq!(client_secret, None);
-            }
-            _ => panic!("expected Login command"),
-        }
+        let Commands::Login {
+            server,
+            client_id,
+            client_secret,
+        } = cli.command
+        else {
+            panic!("expected Login command");
+        };
+        assert_eq!(server, Some("https://example.com".to_string()));
+        assert_eq!(client_id, None);
+        assert_eq!(client_secret, None);
     }
 
     #[test]
     fn test_cli_unlock_parsing() {
         let cli = Cli::parse_from(["vaultwarden-cli", "unlock", "--password", "secret"]);
-        match cli.command {
-            Commands::Unlock { password } => {
-                assert_eq!(password, Some("secret".to_string()));
-            }
-            _ => panic!("expected Unlock command"),
-        }
+        let Commands::Unlock { password } = cli.command else {
+            panic!("expected Unlock command");
+        };
+        assert_eq!(password, Some("secret".to_string()));
     }
 
     #[test]
@@ -319,47 +316,45 @@ mod tests {
             "json",
             "--username",
         ]);
-        match cli.command {
-            Commands::Get {
-                item,
-                format,
-                username,
-                password,
-                org,
-                collection,
-            } => {
-                assert_eq!(item, "item-name");
-                assert!(username);
-                assert!(!password);
-                assert_eq!(format, "json");
-                assert_eq!(org, None);
-                assert_eq!(collection, None);
-            }
-            _ => panic!("expected Get command"),
-        }
+        let Commands::Get {
+            item,
+            format,
+            username,
+            password,
+            org,
+            collection,
+        } = cli.command
+        else {
+            panic!("expected Get command");
+        };
+        assert_eq!(item, "item-name");
+        assert!(username);
+        assert!(!password);
+        assert_eq!(format, "json");
+        assert_eq!(org, None);
+        assert_eq!(collection, None);
     }
 
     #[test]
     fn test_cli_get_password_flag_overrides_format() {
         let cli = Cli::parse_from(["vaultwarden-cli", "get", "item-name", "--password"]);
-        match cli.command {
-            Commands::Get {
-                item,
-                format,
-                username,
-                password,
-                org,
-                collection,
-            } => {
-                assert_eq!(item, "item-name");
-                assert!(!username);
-                assert!(password);
-                assert_eq!(format, "json"); // default
-                assert_eq!(org, None);
-                assert_eq!(collection, None);
-            }
-            _ => panic!("expected Get command"),
-        }
+        let Commands::Get {
+            item,
+            format,
+            username,
+            password,
+            org,
+            collection,
+        } = cli.command
+        else {
+            panic!("expected Get command");
+        };
+        assert_eq!(item, "item-name");
+        assert!(!username);
+        assert!(password);
+        assert_eq!(format, "json"); // default
+        assert_eq!(org, None);
+        assert_eq!(collection, None);
     }
 
     #[test]
@@ -371,24 +366,23 @@ mod tests {
             "--format",
             "env",
         ]);
-        match cli.command {
-            Commands::GetUri {
-                uri,
-                format,
-                username,
-                password,
-                org,
-                collection,
-            } => {
-                assert_eq!(uri, "example.com");
-                assert_eq!(format, "env");
-                assert!(!username);
-                assert!(!password);
-                assert_eq!(org, None);
-                assert_eq!(collection, None);
-            }
-            _ => panic!("expected GetUri command"),
-        }
+        let Commands::GetUri {
+            uri,
+            format,
+            username,
+            password,
+            org,
+            collection,
+        } = cli.command
+        else {
+            panic!("expected GetUri command");
+        };
+        assert_eq!(uri, "example.com");
+        assert_eq!(format, "env");
+        assert!(!username);
+        assert!(!password);
+        assert_eq!(org, None);
+        assert_eq!(collection, None);
     }
 
     #[test]
@@ -402,24 +396,23 @@ mod tests {
             "echo",
             "hello",
         ]);
-        match cli.command {
-            Commands::Run {
-                name,
-                org,
-                folder,
-                collection,
-                info,
-                command,
-            } => {
-                assert_eq!(name, Some("My App".to_string()));
-                assert_eq!(org, None);
-                assert_eq!(folder, None);
-                assert_eq!(collection, None);
-                assert!(!info);
-                assert_eq!(command, vec!["echo", "hello"]);
-            }
-            _ => panic!("expected Run command"),
-        }
+        let Commands::Run {
+            name,
+            org,
+            folder,
+            collection,
+            info,
+            command,
+        } = cli.command
+        else {
+            panic!("expected Run command");
+        };
+        assert_eq!(name, Some("My App".to_string()));
+        assert_eq!(org, None);
+        assert_eq!(folder, None);
+        assert_eq!(collection, None);
+        assert!(!info);
+        assert_eq!(command, vec!["echo", "hello"]);
     }
 
     #[test]
@@ -433,17 +426,16 @@ mod tests {
             "rendered.yml",
             "--skip-missing",
         ]);
-        match cli.command {
-            Commands::Interpolate {
-                file,
-                output,
-                skip_missing,
-            } => {
-                assert_eq!(file, "config.yml");
-                assert_eq!(output, Some("rendered.yml".to_string()));
-                assert!(skip_missing);
-            }
-            _ => panic!("expected Interpolate command"),
-        }
+        let Commands::Interpolate {
+            file,
+            output,
+            skip_missing,
+        } = cli.command
+        else {
+            panic!("expected Interpolate command");
+        };
+        assert_eq!(file, "config.yml");
+        assert_eq!(output, Some("rendered.yml".to_string()));
+        assert!(skip_missing);
     }
 }
