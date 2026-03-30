@@ -38,15 +38,18 @@ impl CryptoKeys {
         let hk = Hkdf::<Sha256>::from_prk(master_key)
             .map_err(|e| anyhow::anyhow!("HKDF PRK init failed: {}", e))?;
 
-        let mut enc_key = vec![0u8; 32];
+        let mut enc_key = [0u8; 32];
         hk.expand(b"enc", &mut enc_key)
             .map_err(|e| anyhow::anyhow!("HKDF expand failed: {}", e))?;
 
-        let mut mac_key = vec![0u8; 32];
+        let mut mac_key = [0u8; 32];
         hk.expand(b"mac", &mut mac_key)
             .map_err(|e| anyhow::anyhow!("HKDF expand failed: {}", e))?;
 
-        Ok(Self { enc_key, mac_key })
+        Ok(Self {
+            enc_key: enc_key.to_vec(),
+            mac_key: mac_key.to_vec(),
+        })
     }
 
     /// Create keys from the decrypted symmetric key (64 bytes: 32 enc + 32 mac)
@@ -500,39 +503,43 @@ mod tests {
         assert_eq!(stretched.mac_key.len(), 32);
     }
 
-    fn encrypt_bytes_for_test(plaintext: &[u8], enc_key: &[u8], mac_key: &[u8]) -> String {
+    mod test_helpers {
+        use super::*;
         use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
         type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
-        let iv: Vec<u8> = (64u8..80).collect();
-        let mut buf = plaintext.to_vec();
-        let msg_len = buf.len();
-        buf.resize(msg_len + 16, 0);
+        pub fn encrypt_bytes_for_test(plaintext: &[u8], enc_key: &[u8], mac_key: &[u8]) -> String {
+            let iv: Vec<u8> = (64u8..80).collect();
+            let mut buf = plaintext.to_vec();
+            let msg_len = buf.len();
+            buf.resize(msg_len + 16, 0);
 
-        let ciphertext = Aes256CbcEnc::new_from_slices(enc_key, &iv)
-            .unwrap()
-            .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
-            .unwrap()
-            .to_vec();
+            let ciphertext = Aes256CbcEnc::new_from_slices(enc_key, &iv)
+                .unwrap()
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
+                .unwrap()
+                .to_vec();
 
-        let mut hmac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
-        hmac.update(&iv);
-        hmac.update(&ciphertext);
-        let mac = hmac.finalize().into_bytes();
+            let mut hmac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
+            hmac.update(&iv);
+            hmac.update(&ciphertext);
+            let mac = hmac.finalize().into_bytes();
 
-        format!(
-            "2.{}|{}|{}",
-            BASE64.encode(&iv),
-            BASE64.encode(&ciphertext),
-            BASE64.encode(mac)
-        )
+            format!(
+                "2.{}|{}|{}",
+                BASE64.encode(&iv),
+                BASE64.encode(&ciphertext),
+                BASE64.encode(mac)
+            )
+        }
     }
 
     // Round-trip encryption/decryption test using real crypto
     mod roundtrip_tests {
+        use super::test_helpers::encrypt_bytes_for_test;
         use super::*;
 
         #[test]
@@ -645,6 +652,7 @@ mod tests {
     }
 
     mod rsa_roundtrip_tests {
+        use super::test_helpers::encrypt_bytes_for_test;
         use super::*;
         use rsa::pkcs8::EncodePrivateKey;
         use rsa::rand_core::OsRng;
