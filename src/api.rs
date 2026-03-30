@@ -11,7 +11,6 @@ pub struct ApiClient {
 impl ApiClient {
     pub fn new(base_url: &str) -> Result<Self> {
         let client = Client::builder()
-            .danger_accept_invalid_certs(false)
             .build()
             .context("Failed to create HTTP client")?;
 
