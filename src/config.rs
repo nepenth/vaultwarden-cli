@@ -198,7 +198,7 @@ pub fn get_client_secret(client_id: &str) -> Result<String> {
 }
 
 pub fn delete_client_secret(client_id: &str) -> Result<()> {
-    keyring_entry(client_id)?.delete_credential().ok(); // Ignore errors if not found
+    let _ = keyring_entry(client_id)?.delete_credential(); // Ignore errors if not found
     Ok(())
 }
 
@@ -501,14 +501,8 @@ mod tests {
 
             // Manually save keys
             let user_keys = config.crypto_keys.as_ref().map(|keys| KeyData {
-                enc_key: base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &keys.enc_key,
-                ),
-                mac_key: base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &keys.mac_key,
-                ),
+                enc_key: BASE64.encode(&keys.enc_key),
+                mac_key: BASE64.encode(&keys.mac_key),
             });
 
             let saved = SavedKeys {
@@ -523,16 +517,8 @@ mod tests {
             let loaded_saved: SavedKeys = serde_json::from_str(&loaded_content).unwrap();
 
             let keys_data = loaded_saved.user_keys.unwrap();
-            let enc_key = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                &keys_data.enc_key,
-            )
-            .unwrap();
-            let mac_key = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                &keys_data.mac_key,
-            )
-            .unwrap();
+            let enc_key = BASE64.decode(&keys_data.enc_key).unwrap();
+            let mac_key = BASE64.decode(&keys_data.mac_key).unwrap();
 
             assert_eq!(enc_key, vec![0x42u8; 32]);
             assert_eq!(mac_key, vec![0x43u8; 32]);
@@ -567,14 +553,8 @@ mod tests {
                     (
                         id.clone(),
                         KeyData {
-                            enc_key: base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                &keys.enc_key,
-                            ),
-                            mac_key: base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                &keys.mac_key,
-                            ),
+                            enc_key: BASE64.encode(&keys.enc_key),
+                            mac_key: BASE64.encode(&keys.mac_key),
                         },
                     )
                 })
@@ -594,11 +574,7 @@ mod tests {
             assert_eq!(loaded_saved.org_keys.len(), 2);
 
             let org1_data = loaded_saved.org_keys.get("org-1").unwrap();
-            let org1_enc = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                &org1_data.enc_key,
-            )
-            .unwrap();
+            let org1_enc = BASE64.decode(&org1_data.enc_key).unwrap();
             assert_eq!(org1_enc, vec![0x11u8; 32]);
         }
 
