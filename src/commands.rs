@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH}; // used by unix_now()
 
 fn unix_now() -> i64 {
@@ -718,11 +719,12 @@ pub async fn interpolate(file: &str, output_file: Option<&str>, skip_missing: bo
 
     let input =
         fs::read_to_string(file).with_context(|| format!("Failed to read file '{}'", file))?;
-    let re = Regex::new(r"\(\(([^\s()]+)\)\)").expect("valid regex");
+    static PLACEHOLDER_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\(\(([^\s()]+)\)\)").expect("valid regex"));
     let mut missing: Vec<String> = Vec::new();
     let mut unmatched_placeholders: Vec<String> = Vec::new();
 
-    let output = re.replace_all(&input, |caps: &regex::Captures| {
+    let output = PLACEHOLDER_RE.replace_all(&input, |caps: &regex::Captures| {
         let full_placeholder = caps[0].to_string();
         let placeholder = &caps[1];
         match parse_placeholder(placeholder) {
