@@ -485,13 +485,11 @@ fn output_matches_search(output: &CipherOutput, search_lower: &str) -> bool {
         || output
             .username
             .as_ref()
-            .map(|u| u.to_lowercase().contains(search_lower))
-            .unwrap_or(false)
+            .is_some_and(|u| u.to_lowercase().contains(search_lower))
         || output
             .uri
             .as_ref()
-            .map(|u| u.to_lowercase().contains(search_lower))
-            .unwrap_or(false)
+            .is_some_and(|u| u.to_lowercase().contains(search_lower))
 }
 
 pub async fn list(
@@ -535,6 +533,7 @@ pub async fn list(
     }
 
     // Decrypt and filter
+    let search_lower = search.as_ref().map(|s| s.to_lowercase());
     let mut outputs: Vec<CipherOutput> = Vec::new();
     for cipher in ciphers {
         let keys = match get_cipher_keys(&ctx.config, cipher) {
@@ -547,8 +546,8 @@ pub async fn list(
 
         match decrypt_cipher(cipher, keys) {
             Ok(output) => {
-                if let Some(search_term) = &search
-                    && !output_matches_search(&output, &search_term.to_lowercase())
+                if let Some(ref term) = search_lower
+                    && !output_matches_search(&output, term)
                 {
                     continue;
                 }
