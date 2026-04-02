@@ -1924,6 +1924,248 @@ mod tests {
         }
     }
 
+    // Tests for unlock command
+    mod unlock_tests {
+        use super::*;
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+        use rsa::pkcs8::EncodePrivateKey;
+        use rsa::rand_core::OsRng;
+        use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
+        use sha2::Sha256;
+
+        fn set_temp_config_dir(temp_dir: &tempfile::TempDir) {
+            unsafe {
+                std::env::set_var("HOME", temp_dir.path());
+                std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+            }
+        }
+
+        fn encrypt_symmetric_key_for_test(
+            symmetric_key: &[u8],
+            password: &str,
+            email: &str,
+            iterations: u32,
+        ) -> String {
+            use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+            use cbc::Encryptor;
+            use hmac::{Hmac, Mac};
+
+            type Aes256CbcEnc = Encryptor<aes::Aes256>;
+
+            let master_key = CryptoKeys::derive_master_key(password, email, iterations);
+            let stretched = CryptoKeys::stretch_master_key(&master_key).unwrap();
+
+            let iv: Vec<u8> = (64u8..80).collect();
+            let mut buf = symmetric_key.to_vec();
+            let msg_len = buf.len();
+            buf.resize(msg_len + 16, 0);
+
+            let ciphertext = Aes256CbcEnc::new_from_slices(&stretched.enc_key, &iv)
+                .unwrap()
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
+                .unwrap()
+                .to_vec();
+
+            let mut hmac = Hmac::<Sha256>::new_from_slice(&stretched.mac_key).unwrap();
+            hmac.update(&iv);
+            hmac.update(&ciphertext);
+            let mac = hmac.finalize().into_bytes();
+
+            format!(
+                "2.{}|{}|{}",
+                BASE64.encode(&iv),
+                BASE64.encode(&ciphertext),
+                BASE64.encode(mac)
+            )
+        }
+
+        fn encrypt_bytes_for_test(plaintext: &[u8], enc_key: &[u8], mac_key: &[u8]) -> String {
+            use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+            use cbc::Encryptor;
+            use hmac::{Hmac, Mac};
+
+            type Aes256CbcEnc = Encryptor<aes::Aes256>;
+
+            let iv: Vec<u8> = (64u8..80).collect();
+            let mut buf = plaintext.to_vec();
+            let msg_len = buf.len();
+            buf.resize(msg_len + 16, 0);
+
+            let ciphertext = Aes256CbcEnc::new_from_slices(enc_key, &iv)
+                .unwrap()
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
+                .unwrap()
+                .to_vec();
+
+            let mut hmac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
+            hmac.update(&iv);
+            hmac.update(&ciphertext);
+            let mac = hmac.finalize().into_bytes();
+
+            format!(
+                "2.{}|{}|{}",
+                BASE64.encode(&iv),
+                BASE64.encode(&ciphertext),
+                BASE64.encode(mac)
+            )
+        }
+
+        #[tokio::test]
+        async fn test_unlock_fails_when_not_logged_in() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let result = unlock(Some("password".to_string())).await;
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Not logged in"));
+        }
+
+        #[tokio::test]
+        async fn test_unlock_with_password_argument() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+            let mut symmetric_key = keys.enc_key.clone();
+            symmetric_key.extend_from_slice(&keys.mac_key);
+
+            let encrypted_key = encrypt_symmetric_key_for_test(
+                &symmetric_key,
+                "master-password",
+                "user@example.com",
+                100000,
+            );
+
+            let config = Config {
+                server: Some("https://vault.example.com".to_string()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                encrypted_key: Some(encrypted_key),
+                kdf_iterations: Some(100000),
+                ..Default::default()
+            };
+            config.save().unwrap();
+
+            let result = unlock(Some("master-password".to_string())).await;
+            assert!(result.is_ok());
+
+            let loaded = Config::load().unwrap();
+            assert!(loaded.is_unlocked());
+            assert!(Config::keys_path().unwrap().exists());
+        }
+
+        #[tokio::test]
+        async fn test_unlock_fails_with_wrong_password() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+            let mut symmetric_key = keys.enc_key.clone();
+            symmetric_key.extend_from_slice(&keys.mac_key);
+
+            let encrypted_key = encrypt_symmetric_key_for_test(
+                &symmetric_key,
+                "master-password",
+                "user@example.com",
+                100000,
+            );
+
+            let config = Config {
+                server: Some("https://vault.example.com".to_string()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                encrypted_key: Some(encrypted_key),
+                kdf_iterations: Some(100000),
+                ..Default::default()
+            };
+            config.save().unwrap();
+
+            let result = unlock(Some("wrong-password".to_string())).await;
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to decrypt vault key"));
+        }
+
+        #[tokio::test]
+        async fn test_unlock_decrypts_org_keys() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let user_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+            let mut symmetric_key = user_keys.enc_key.clone();
+            symmetric_key.extend_from_slice(&user_keys.mac_key);
+
+            let encrypted_key = encrypt_symmetric_key_for_test(
+                &symmetric_key,
+                "master-password",
+                "user@example.com",
+                100000,
+            );
+
+            // Generate RSA key pair
+            let mut rng = OsRng;
+            let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+            let public_key = RsaPublicKey::from(&private_key);
+            let der = private_key.to_pkcs8_der().unwrap().as_bytes().to_vec();
+
+            let encrypted_private_key =
+                encrypt_bytes_for_test(&der, &user_keys.enc_key, &user_keys.mac_key);
+
+            // Encrypt org symmetric key with RSA
+            let org_symmetric_key: Vec<u8> = (0..64).collect();
+            let padding = Oaep::new::<Sha256>();
+            let encrypted_org_key = public_key
+                .encrypt(&mut rng, padding, &org_symmetric_key)
+                .unwrap();
+            let encrypted_org_key_str =
+                format!("6.{}", BASE64.encode(&encrypted_org_key));
+
+            let mut config = Config {
+                server: Some("https://vault.example.com".to_string()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                encrypted_key: Some(encrypted_key),
+                encrypted_private_key: Some(encrypted_private_key),
+                kdf_iterations: Some(100000),
+                ..Default::default()
+            };
+            config
+                .org_keys
+                .insert("org-1".to_string(), encrypted_org_key_str);
+            config.save().unwrap();
+
+            let result = unlock(Some("master-password".to_string())).await;
+            assert!(result.is_ok());
+
+            let loaded = Config::load().unwrap();
+            assert!(loaded.is_unlocked());
+            let org_keys = loaded.org_crypto_keys.get("org-1").expect("org key present");
+            assert_eq!(org_keys.enc_key, org_symmetric_key[0..32]);
+            assert_eq!(org_keys.mac_key, org_symmetric_key[32..64]);
+        }
+    }
+
     // Tests for ensure_valid_token helper
     mod ensure_valid_token_tests {
         use super::*;
