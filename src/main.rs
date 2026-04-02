@@ -277,6 +277,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_effective_format_username_override() {
+        assert_eq!(effective_format("json", true, false), "username");
+    }
+
+    #[test]
+    fn test_effective_format_password_override() {
+        assert_eq!(effective_format("json", false, true), "value");
+    }
+
+    #[test]
+    fn test_effective_format_no_override() {
+        assert_eq!(effective_format("env", false, false), "env");
+        assert_eq!(effective_format("json", false, false), "json");
+    }
+
+    #[test]
     fn test_cli_login_parsing() {
         let cli = Cli::parse_from([
             "vaultwarden-cli",
