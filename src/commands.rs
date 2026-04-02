@@ -1695,6 +1695,235 @@ mod tests {
         }
     }
 
+    // Tests for login command
+    mod login_tests {
+        use super::*;
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn set_temp_config_dir(temp_dir: &tempfile::TempDir) {
+            unsafe {
+                std::env::set_var("HOME", temp_dir.path());
+                std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+            }
+        }
+
+        #[tokio::test]
+        async fn test_login_success_with_provided_credentials() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/alive"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let token_response = serde_json::json!({
+                "access_token": "access-123",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+                "refresh_token": "refresh-123",
+                "scope": "api",
+                "key": "2.encrypted-key",
+                "privateKey": "2.encrypted-private-key",
+                "kdf": 0,
+                "kdfIterations": 600000
+            });
+
+            Mock::given(method("POST"))
+                .and(path("/identity/connect/token"))
+                .and(body_string_contains("grant_type=client_credentials"))
+                .and(body_string_contains("client_id=test-client"))
+                .and(body_string_contains("client_secret=test-secret"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&token_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let sync_response = serde_json::json!({
+                "ciphers": [],
+                "folders": [],
+                "collections": [],
+                "profile": {
+                    "id": "user-1",
+                    "email": "user@example.com",
+                    "name": "Test User",
+                    "privateKey": "2.encrypted-private-key",
+                    "organizations": [
+                        {
+                            "id": "org-1",
+                            "name": "Engineering",
+                            "key": "2.org-key"
+                        }
+                    ]
+                }
+            });
+
+            Mock::given(method("GET"))
+                .and(path("/api/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let result = login(
+                Some(mock_server.uri()),
+                Some("test-client".to_string()),
+                Some("test-secret".to_string()),
+            )
+            .await;
+
+            assert!(result.is_ok());
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.server, Some(mock_server.uri()));
+            assert_eq!(config.client_id, Some("test-client".to_string()));
+            assert_eq!(config.access_token, Some("access-123".to_string()));
+            assert_eq!(config.refresh_token, Some("refresh-123".to_string()));
+            assert_eq!(config.email, Some("user@example.com".to_string()));
+            assert_eq!(config.encrypted_key, Some("2.encrypted-key".to_string()));
+            assert_eq!(config.encrypted_private_key, Some("2.encrypted-private-key".to_string()));
+            assert_eq!(config.kdf_iterations, Some(600000));
+            assert_eq!(config.org_keys.get("org-1"), Some(&"2.org-key".to_string()));
+            assert!(config.token_expiry.unwrap() > 0);
+        }
+
+        #[tokio::test]
+        async fn test_login_fails_when_server_unreachable() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/alive"))
+                .respond_with(ResponseTemplate::new(503))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let result = login(
+                Some(mock_server.uri()),
+                Some("test-client".to_string()),
+                Some("test-secret".to_string()),
+            )
+            .await;
+
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Server is not reachable"));
+        }
+
+        #[tokio::test]
+        async fn test_login_fails_on_invalid_credentials() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/alive"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            Mock::given(method("POST"))
+                .and(path("/identity/connect/token"))
+                .respond_with(
+                    ResponseTemplate::new(401).set_body_string("{\"error\":\"invalid_client\"}"),
+                )
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let result = login(
+                Some(mock_server.uri()),
+                Some("test-client".to_string()),
+                Some("bad-secret".to_string()),
+            )
+            .await;
+
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn test_login_uses_existing_config_server_and_client_id() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            let existing = Config {
+                server: Some(mock_server.uri()),
+                client_id: Some("existing-client".to_string()),
+                ..Default::default()
+            };
+            existing.save().unwrap();
+
+            Mock::given(method("GET"))
+                .and(path("/alive"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let token_response = serde_json::json!({
+                "access_token": "access-123",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+                "key": "2.encrypted-key",
+                "kdfIterations": 600000
+            });
+
+            Mock::given(method("POST"))
+                .and(path("/identity/connect/token"))
+                .and(body_string_contains("client_id=existing-client"))
+                .and(body_string_contains("client_secret=new-secret"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&token_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let sync_response = serde_json::json!({
+                "ciphers": [],
+                "folders": [],
+                "collections": [],
+                "profile": {
+                    "id": "user-1",
+                    "email": "user@example.com",
+                    "organizations": []
+                }
+            });
+
+            Mock::given(method("GET"))
+                .and(path("/api/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let result = login(None, None, Some("new-secret".to_string())).await;
+
+            assert!(result.is_ok());
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.server, Some(mock_server.uri()));
+            assert_eq!(config.client_id, Some("existing-client".to_string()));
+            assert_eq!(config.access_token, Some("access-123".to_string()));
+        }
+    }
+
     // Tests for ensure_valid_token helper
     mod ensure_valid_token_tests {
         use super::*;
