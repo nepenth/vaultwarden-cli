@@ -2345,6 +2345,250 @@ mod tests {
         }
     }
 
+    // Tests for interpolate command
+    mod interpolate_tests {
+        use super::*;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn set_temp_config_dir(temp_dir: &tempfile::TempDir) {
+            unsafe {
+                std::env::set_var("HOME", temp_dir.path());
+                std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+            }
+        }
+
+        fn make_sync_response_with_one_login() -> serde_json::Value {
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+
+            let encrypted_name = crate::crypto::tests::test_helpers::encrypt_bytes_for_test(
+                b"MyLogin",
+                &crypto_keys.enc_key,
+                &crypto_keys.mac_key,
+            );
+            let encrypted_user = crate::crypto::tests::test_helpers::encrypt_bytes_for_test(
+                b"myuser",
+                &crypto_keys.enc_key,
+                &crypto_keys.mac_key,
+            );
+            let encrypted_pass = crate::crypto::tests::test_helpers::encrypt_bytes_for_test(
+                b"mypass",
+                &crypto_keys.enc_key,
+                &crypto_keys.mac_key,
+            );
+
+            serde_json::json!({
+                "ciphers": [
+                    {
+                        "id": "cipher-1",
+                        "type": 1,
+                        "name": encrypted_name,
+                        "login": {
+                            "username": encrypted_user,
+                            "password": encrypted_pass,
+                            "uris": null,
+                            "totp": null
+                        },
+                        "collectionIds": [],
+                        "organizationId": null
+                    }
+                ],
+                "folders": [],
+                "collections": [],
+                "profile": {
+                    "id": "user-1",
+                    "email": "user@example.com",
+                    "organizations": []
+                }
+            })
+        }
+
+        #[tokio::test]
+        async fn test_interpolate_replaces_placeholders() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            let sync_response = make_sync_response_with_one_login();
+
+            Mock::given(method("GET"))
+                .and(path("/api/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+
+            let config = Config {
+                server: Some(mock_server.uri()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                crypto_keys: Some(crypto_keys),
+                ..Default::default()
+            };
+            config.save().unwrap();
+            config.save_keys().unwrap();
+
+            let input_path = temp_dir.path().join("input.yml");
+            std::fs::write(&input_path, "user: ((MyLogin.username))\npass: ((MyLogin.password))\n").unwrap();
+
+            let result = interpolate(input_path.to_str().unwrap(), None, false).await;
+            assert!(result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_interpolate_writes_to_output_file() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            let sync_response = make_sync_response_with_one_login();
+
+            Mock::given(method("GET"))
+                .and(path("/api/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+
+            let config = Config {
+                server: Some(mock_server.uri()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                crypto_keys: Some(crypto_keys),
+                ..Default::default()
+            };
+            config.save().unwrap();
+            config.save_keys().unwrap();
+
+            let input_path = temp_dir.path().join("input.yml");
+            std::fs::write(&input_path, "user: ((MyLogin.username))\n").unwrap();
+
+            let output_path = temp_dir.path().join("output.yml");
+            let result = interpolate(
+                input_path.to_str().unwrap(),
+                Some(output_path.to_str().unwrap()),
+                false,
+            )
+            .await;
+            assert!(result.is_ok());
+
+            let output = std::fs::read_to_string(&output_path).unwrap();
+            assert_eq!(output, "user: myuser\n");
+        }
+
+        #[tokio::test]
+        async fn test_interpolate_fails_on_missing_placeholder() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            let sync_response = make_sync_response_with_one_login();
+
+            Mock::given(method("GET"))
+                .and(path("/api/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+
+            let config = Config {
+                server: Some(mock_server.uri()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                crypto_keys: Some(crypto_keys),
+                ..Default::default()
+            };
+            config.save().unwrap();
+            config.save_keys().unwrap();
+
+            let input_path = temp_dir.path().join("input.yml");
+            std::fs::write(&input_path, "missing: ((Unknown.item))\n").unwrap();
+
+            let result = interpolate(input_path.to_str().unwrap(), None, false).await;
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Interpolation failed"));
+        }
+
+        #[tokio::test]
+        async fn test_interpolate_skips_missing_placeholders() {
+            let _guard = ENV_LOCK.lock().await;
+            let temp_dir = tempfile::TempDir::new().unwrap();
+            set_temp_config_dir(&temp_dir);
+
+            let mock_server = MockServer::start().await;
+
+            let sync_response = make_sync_response_with_one_login();
+
+            Mock::given(method("GET"))
+                .and(path("/api/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+
+            let config = Config {
+                server: Some(mock_server.uri()),
+                access_token: Some("token".to_string()),
+                token_expiry: Some(i64::MAX),
+                email: Some("user@example.com".to_string()),
+                crypto_keys: Some(crypto_keys),
+                ..Default::default()
+            };
+            config.save().unwrap();
+            config.save_keys().unwrap();
+
+            let input_path = temp_dir.path().join("input.yml");
+            std::fs::write(&input_path, "keep: ((Missing.item))\n").unwrap();
+
+            let output_path = temp_dir.path().join("output.yml");
+            let result = interpolate(
+                input_path.to_str().unwrap(),
+                Some(output_path.to_str().unwrap()),
+                true,
+            )
+            .await;
+            assert!(result.is_ok());
+
+            let output = std::fs::read_to_string(&output_path).unwrap();
+            assert_eq!(output, "keep: ((Missing.item))\n");
+        }
+    }
+
     // Tests for ensure_valid_token helper
     mod ensure_valid_token_tests {
         use super::*;
