@@ -170,7 +170,7 @@ impl CryptoKeys {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // Known test vectors for PBKDF2 key derivation
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(keys.mac_key, vec![0x43u8; 32]);
     }
 
-    mod test_helpers {
+    pub(crate) mod test_helpers {
         use super::*;
         use aes::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
         use hmac::{Hmac, Mac};

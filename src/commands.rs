@@ -2166,6 +2166,185 @@ mod tests {
         }
     }
 
+    mod query_helpers_tests {
+        use super::*;
+
+        #[test]
+        fn test_try_decrypt_some() {
+            let keys = crate::crypto::tests::test_helpers::encrypt_bytes_for_test;
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+            let encrypted = keys(b"secret", &crypto_keys.enc_key, &crypto_keys.mac_key);
+            let result = try_decrypt(&crypto_keys, Some(&encrypted)).unwrap();
+            assert_eq!(result, Some("secret".to_string()));
+        }
+
+        #[test]
+        fn test_try_decrypt_none() {
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0u8; 32],
+                mac_key: vec![0u8; 32],
+            };
+            let result = try_decrypt(&crypto_keys, None).unwrap();
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn test_get_field_string_some() {
+            assert_eq!(
+                get_field_string(&Some("value".to_string()), "username").unwrap(),
+                "value"
+            );
+        }
+
+        #[test]
+        fn test_get_field_string_none() {
+            let err = get_field_string(&None, "password").unwrap_err();
+            assert!(err.to_string().contains("Item has no password"));
+        }
+
+        #[test]
+        fn test_output_matches_search_name() {
+            let output = CipherOutput {
+                id: "1".to_string(),
+                cipher_type: "login".to_string(),
+                name: "My Secret App".to_string(),
+                username: None,
+                password: None,
+                uri: None,
+                notes: None,
+                fields: None,
+            };
+            assert!(output_matches_search(&output, "secret"));
+        }
+
+        #[test]
+        fn test_output_matches_search_username() {
+            let output = CipherOutput {
+                id: "1".to_string(),
+                cipher_type: "login".to_string(),
+                name: "App".to_string(),
+                username: Some("admin@example.com".to_string()),
+                password: None,
+                uri: None,
+                notes: None,
+                fields: None,
+            };
+            assert!(output_matches_search(&output, "admin"));
+        }
+
+        #[test]
+        fn test_output_matches_search_uri() {
+            let output = CipherOutput {
+                id: "1".to_string(),
+                cipher_type: "login".to_string(),
+                name: "App".to_string(),
+                username: None,
+                password: None,
+                uri: Some("https://github.com".to_string()),
+                notes: None,
+                fields: None,
+            };
+            assert!(output_matches_search(&output, "github"));
+        }
+
+        #[test]
+        fn test_output_matches_search_no_match() {
+            let output = CipherOutput {
+                id: "1".to_string(),
+                cipher_type: "login".to_string(),
+                name: "App".to_string(),
+                username: Some("user".to_string()),
+                password: None,
+                uri: Some("https://example.com".to_string()),
+                notes: None,
+                fields: None,
+            };
+            assert!(!output_matches_search(&output, "missing"));
+        }
+
+        #[test]
+        fn test_find_cipher_output_finds_match() {
+            use crate::models::Cipher;
+
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+            let config = Config {
+                crypto_keys: Some(crypto_keys.clone()),
+                ..Default::default()
+            };
+
+            let encrypted_name = crate::crypto::tests::test_helpers::encrypt_bytes_for_test(
+                b"Target",
+                &crypto_keys.enc_key,
+                &crypto_keys.mac_key,
+            );
+
+            let ciphers = vec![Cipher {
+                id: "cipher-1".to_string(),
+                r#type: 1,
+                organization_id: None,
+                name: Some(encrypted_name),
+                notes: None,
+                folder_id: None,
+                login: None,
+                card: None,
+                identity: None,
+                secure_note: None,
+                collection_ids: Vec::new(),
+                fields: None,
+                data: None,
+            }];
+
+            let result = find_cipher_output(&ciphers, &config, |o| o.name == "Target", |_c| true);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().name, "Target");
+        }
+
+        #[test]
+        fn test_find_cipher_output_no_match() {
+            use crate::models::Cipher;
+
+            let crypto_keys = CryptoKeys {
+                enc_key: vec![0x42u8; 32],
+                mac_key: vec![0x43u8; 32],
+            };
+            let config = Config {
+                crypto_keys: Some(crypto_keys.clone()),
+                ..Default::default()
+            };
+
+            let encrypted_name = crate::crypto::tests::test_helpers::encrypt_bytes_for_test(
+                b"Other",
+                &crypto_keys.enc_key,
+                &crypto_keys.mac_key,
+            );
+
+            let ciphers = vec![Cipher {
+                id: "cipher-1".to_string(),
+                r#type: 1,
+                organization_id: None,
+                name: Some(encrypted_name),
+                notes: None,
+                folder_id: None,
+                login: None,
+                card: None,
+                identity: None,
+                secure_note: None,
+                collection_ids: Vec::new(),
+                fields: None,
+                data: None,
+            }];
+
+            let result = find_cipher_output(&ciphers, &config, |o| o.name == "Target", |_c| true);
+            assert!(result.is_none());
+        }
+    }
+
     // Tests for ensure_valid_token helper
     mod ensure_valid_token_tests {
         use super::*;
