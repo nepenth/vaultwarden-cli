@@ -78,14 +78,22 @@ If the token is expired and cannot be refreshed, you will need to run `vaultward
 ### Retrieving Secrets
 
 ```bash
-# List all items
+# List all items (plain output: env var names)
 vaultwarden-cli list
+# Output:
+# GITHUB_URI
+# GITHUB_USERNAME
+#
+# MY_NOTE
 
 # List only login items
 vaultwarden-cli list --type login
 
 # Search for items
 vaultwarden-cli list --search github
+
+# Output full item payloads as JSON
+vaultwarden-cli list --json
 
 # Get a specific item (by name or ID)
 vaultwarden-cli get "My Login"
