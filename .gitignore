@@ -1,3 +1,4 @@
 /target
+/.codex
 sbom.cdx.json
 test.yml
