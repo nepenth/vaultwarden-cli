@@ -125,7 +125,8 @@ enum Commands {
         name: Vec<String>,
 
         /// Item name or ID to inject when no selector flag is provided
-        item: Option<String>,
+        #[arg(value_delimiter = ',')]
+        item: Vec<String>,
 
         /// Filter by organization name or ID
         #[arg(long)]
@@ -255,7 +256,7 @@ async fn main() {
         } => {
             let requested_items =
                 if name.is_empty() && org.is_none() && folder.is_none() && collection.is_none() {
-                    item.into_iter().collect()
+                    item
                 } else {
                     name
                 };
@@ -460,7 +461,7 @@ mod tests {
             panic!("expected Run command");
         };
         assert_eq!(name, vec!["My App".to_string()]);
-        assert_eq!(item, None);
+        assert!(item.is_empty());
         assert_eq!(org, None);
         assert_eq!(folder, None);
         assert_eq!(collection, None);
@@ -484,7 +485,70 @@ mod tests {
             panic!("expected Run command");
         };
         assert!(name.is_empty());
-        assert_eq!(item, Some("My App".to_string()));
+        assert_eq!(item, vec!["My App".to_string()]);
+        assert_eq!(org, None);
+        assert_eq!(folder, None);
+        assert_eq!(collection, None);
+        assert!(!info);
+        assert_eq!(command, vec!["echo", "hello"]);
+    }
+
+    #[test]
+    fn test_cli_run_parsing_with_multiple_implicit_names() {
+        let cli = Cli::parse_from([
+            "vaultwarden-cli",
+            "run",
+            "My App",
+            "Other App",
+            "--",
+            "echo",
+            "hello",
+        ]);
+        let Commands::Run {
+            name,
+            item,
+            org,
+            folder,
+            collection,
+            info,
+            command,
+        } = cli.command
+        else {
+            panic!("expected Run command");
+        };
+        assert!(name.is_empty());
+        assert_eq!(item, vec!["My App".to_string(), "Other App".to_string()]);
+        assert_eq!(org, None);
+        assert_eq!(folder, None);
+        assert_eq!(collection, None);
+        assert!(!info);
+        assert_eq!(command, vec!["echo", "hello"]);
+    }
+
+    #[test]
+    fn test_cli_run_parsing_with_comma_separated_implicit_names() {
+        let cli = Cli::parse_from([
+            "vaultwarden-cli",
+            "run",
+            "My App,Other App",
+            "--",
+            "echo",
+            "hello",
+        ]);
+        let Commands::Run {
+            name,
+            item,
+            org,
+            folder,
+            collection,
+            info,
+            command,
+        } = cli.command
+        else {
+            panic!("expected Run command");
+        };
+        assert!(name.is_empty());
+        assert_eq!(item, vec!["My App".to_string(), "Other App".to_string()]);
         assert_eq!(org, None);
         assert_eq!(folder, None);
         assert_eq!(collection, None);

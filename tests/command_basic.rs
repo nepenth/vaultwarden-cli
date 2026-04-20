@@ -322,6 +322,141 @@ async fn run_with_implicit_name_injects_matching_item() {
 }
 
 #[tokio::test]
+async fn run_with_multiple_implicit_names_injects_multiple_items() {
+    let ctx = TestContext::new();
+    let keys = test_crypto_keys();
+    let mock_server = MockServer::start().await;
+
+    let sync_response = serde_json::json!({
+        "Ciphers": [
+            {
+                "Id": "cipher-1",
+                "Type": 1,
+                "Name": encrypt_string_for_test("Alpha", &keys),
+                "Login": {
+                    "Username": encrypt_string_for_test("alice", &keys),
+                    "Password": encrypt_string_for_test("alpha-secret", &keys)
+                },
+                "CollectionIds": []
+            },
+            {
+                "Id": "cipher-2",
+                "Type": 1,
+                "Name": encrypt_string_for_test("Beta", &keys),
+                "Login": {
+                    "Username": encrypt_string_for_test("bob", &keys),
+                    "Password": encrypt_string_for_test("beta-secret", &keys)
+                },
+                "CollectionIds": []
+            }
+        ],
+        "Folders": [],
+        "Collections": [],
+        "Profile": {
+            "Id": "user-1",
+            "Email": "user@example.com",
+            "Organizations": []
+        }
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/api/sync"))
+        .and(header("authorization", "Bearer access-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    ctx.write_config(&Config {
+        server: Some(mock_server.uri()),
+        access_token: Some("access-token".to_string()),
+        token_expiry: Some(i64::MAX),
+        ..Default::default()
+    })
+    .unwrap();
+    ctx.write_saved_user_keys(&keys).unwrap();
+
+    ctx.binary()
+        .arg("run")
+        .arg("Alpha")
+        .arg("Beta")
+        .arg("--info")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ALPHA_USERNAME"))
+        .stdout(predicate::str::contains("ALPHA_PASSWORD"))
+        .stdout(predicate::str::contains("BETA_USERNAME"))
+        .stdout(predicate::str::contains("BETA_PASSWORD"));
+}
+
+#[tokio::test]
+async fn run_with_comma_separated_implicit_names_injects_multiple_items() {
+    let ctx = TestContext::new();
+    let keys = test_crypto_keys();
+    let mock_server = MockServer::start().await;
+
+    let sync_response = serde_json::json!({
+        "Ciphers": [
+            {
+                "Id": "cipher-1",
+                "Type": 1,
+                "Name": encrypt_string_for_test("Alpha", &keys),
+                "Login": {
+                    "Username": encrypt_string_for_test("alice", &keys),
+                    "Password": encrypt_string_for_test("alpha-secret", &keys)
+                },
+                "CollectionIds": []
+            },
+            {
+                "Id": "cipher-2",
+                "Type": 1,
+                "Name": encrypt_string_for_test("Beta", &keys),
+                "Login": {
+                    "Username": encrypt_string_for_test("bob", &keys),
+                    "Password": encrypt_string_for_test("beta-secret", &keys)
+                },
+                "CollectionIds": []
+            }
+        ],
+        "Folders": [],
+        "Collections": [],
+        "Profile": {
+            "Id": "user-1",
+            "Email": "user@example.com",
+            "Organizations": []
+        }
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/api/sync"))
+        .and(header("authorization", "Bearer access-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&sync_response))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    ctx.write_config(&Config {
+        server: Some(mock_server.uri()),
+        access_token: Some("access-token".to_string()),
+        token_expiry: Some(i64::MAX),
+        ..Default::default()
+    })
+    .unwrap();
+    ctx.write_saved_user_keys(&keys).unwrap();
+
+    ctx.binary()
+        .arg("run")
+        .arg("Alpha,Beta")
+        .arg("--info")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ALPHA_USERNAME"))
+        .stdout(predicate::str::contains("ALPHA_PASSWORD"))
+        .stdout(predicate::str::contains("BETA_USERNAME"))
+        .stdout(predicate::str::contains("BETA_PASSWORD"));
+}
+
+#[tokio::test]
 async fn interpolate_skip_missing_reports_unmatched_placeholders_on_stderr() {
     let ctx = TestContext::new();
     let keys = test_crypto_keys();

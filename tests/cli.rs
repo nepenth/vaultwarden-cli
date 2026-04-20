@@ -103,6 +103,35 @@ fn run_accepts_implicit_name_before_double_dash() {
 }
 
 #[test]
+fn run_accepts_multiple_implicit_names_before_double_dash() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run")
+        .arg("My App")
+        .arg("Other App")
+        .arg("--")
+        .arg("echo")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
+fn run_accepts_comma_separated_implicit_names_before_double_dash() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run")
+        .arg("My App,Other App")
+        .arg("--")
+        .arg("echo")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
 fn interpolate_accepts_output_file_option() {
     let ctx = TestContext::new();
 
