@@ -58,6 +58,21 @@ fn run_accepts_credential_name_alias() {
 }
 
 #[test]
+fn run_accepts_multiple_name_flags() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run")
+        .arg("--name")
+        .arg("Alpha")
+        .arg("--name")
+        .arg("Beta")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
 fn run_parses_trailing_command_after_double_dash() {
     let ctx = TestContext::new();
 
@@ -68,6 +83,20 @@ fn run_parses_trailing_command_after_double_dash() {
         .arg("--")
         .arg("echo")
         .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in"));
+}
+
+#[test]
+fn run_accepts_implicit_name_before_double_dash() {
+    let ctx = TestContext::new();
+
+    ctx.binary()
+        .arg("run")
+        .arg("My App")
+        .arg("--")
+        .arg("echo")
         .assert()
         .failure()
         .stderr(predicate::str::contains("Not logged in"));

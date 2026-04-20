@@ -145,6 +145,9 @@ Run commands with secrets injected as environment variables. The secrets are onl
 # Run a command with secrets from an item injected as env vars
 vaultwarden-cli run --name "My Login" -- printenv MY_LOGIN_USERNAME MY_LOGIN_PASSWORD
 
+# `--name` is optional when you want to match by item name
+vaultwarden-cli run "My Login" -- printenv MY_LOGIN_USERNAME MY_LOGIN_PASSWORD
+
 # Run a command with multiple items (comma-separated)
 vaultwarden-cli run --name "My Login, API Token" -- ./deploy.sh
 

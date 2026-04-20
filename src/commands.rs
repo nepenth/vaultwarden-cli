@@ -957,7 +957,7 @@ fn escape_value(value: &str) -> String {
 }
 
 pub async fn run_with_secrets(
-    item_or_uri: Option<&str>,
+    requested_items: &[String],
     search_by_uri: bool,
     org_filter: Option<&str>,
     folder_filter: Option<&str>,
@@ -965,20 +965,6 @@ pub async fn run_with_secrets(
     info_only: bool,
     command: &[String],
 ) -> Result<()> {
-    let requested_items: Vec<String> = if search_by_uri {
-        Vec::new()
-    } else {
-        item_or_uri
-            .map(|raw| {
-                raw.split(',')
-                    .map(|part| part.trim())
-                    .filter(|part| !part.is_empty())
-                    .map(|part| part.to_string())
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-
     if !search_by_uri
         && requested_items.is_empty()
         && org_filter.is_none()
@@ -989,10 +975,6 @@ pub async fn run_with_secrets(
             "At least one of --name, --org, --folder, or --collection must be specified."
         );
     }
-    if !search_by_uri && item_or_uri.is_some() && requested_items.is_empty() {
-        anyhow::bail!("No item names provided.");
-    }
-
     let ctx = load_sync_context().await?;
 
     let org_id_filter = org_filter
@@ -1065,7 +1047,9 @@ pub async fn run_with_secrets(
     };
 
     let outputs: Vec<CipherOutput> = if search_by_uri {
-        let uri = item_or_uri.expect("URI required for URI search");
+        let uri = requested_items
+            .first()
+            .expect("URI required for URI search");
         let uri_lower = uri.to_lowercase();
         vec![
             find_cipher_output(

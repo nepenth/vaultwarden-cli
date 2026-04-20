@@ -120,9 +120,12 @@ enum Commands {
 
     /// Run a command with secrets injected as environment variables
     Run {
-        /// Item name or ID to inject (comma-separated for multiple)
-        #[arg(long, alias = "credential-name")]
-        name: Option<String>,
+        /// Item name or ID to inject (repeat flag or use commas for multiple)
+        #[arg(long, alias = "credential-name", value_delimiter = ',')]
+        name: Vec<String>,
+
+        /// Item name or ID to inject when no selector flag is provided
+        item: Option<String>,
 
         /// Filter by organization name or ID
         #[arg(long)]
@@ -141,7 +144,7 @@ enum Commands {
         info: bool,
 
         /// Command to run (use -- to separate from vaultwarden-cli args)
-        #[arg(trailing_var_arg = true)]
+        #[arg(last = true)]
         command: Vec<String>,
     },
 
@@ -156,7 +159,7 @@ enum Commands {
         info: bool,
 
         /// Command to run (use -- to separate from vaultwarden-cli args)
-        #[arg(trailing_var_arg = true)]
+        #[arg(last = true)]
         command: Vec<String>,
     },
 
@@ -243,14 +246,21 @@ async fn main() {
         }
         Commands::Run {
             name,
+            item,
             org,
             folder,
             collection,
             info,
             command,
         } => {
+            let requested_items =
+                if name.is_empty() && org.is_none() && folder.is_none() && collection.is_none() {
+                    item.into_iter().collect()
+                } else {
+                    name
+                };
             commands::run_with_secrets(
-                name.as_deref(),
+                &requested_items,
                 false,
                 org.as_deref(),
                 folder.as_deref(),
@@ -261,7 +271,7 @@ async fn main() {
             .await
         }
         Commands::RunUri { uri, info, command } => {
-            commands::run_with_secrets(Some(&uri), true, None, None, None, info, &command).await
+            commands::run_with_secrets(&[uri], true, None, None, None, info, &command).await
         }
         Commands::Status => commands::status().await,
         Commands::Interpolate {
@@ -439,6 +449,7 @@ mod tests {
         ]);
         let Commands::Run {
             name,
+            item,
             org,
             folder,
             collection,
@@ -448,7 +459,32 @@ mod tests {
         else {
             panic!("expected Run command");
         };
-        assert_eq!(name, Some("My App".to_string()));
+        assert_eq!(name, vec!["My App".to_string()]);
+        assert_eq!(item, None);
+        assert_eq!(org, None);
+        assert_eq!(folder, None);
+        assert_eq!(collection, None);
+        assert!(!info);
+        assert_eq!(command, vec!["echo", "hello"]);
+    }
+
+    #[test]
+    fn test_cli_run_parsing_with_implicit_name() {
+        let cli = Cli::parse_from(["vaultwarden-cli", "run", "My App", "--", "echo", "hello"]);
+        let Commands::Run {
+            name,
+            item,
+            org,
+            folder,
+            collection,
+            info,
+            command,
+        } = cli.command
+        else {
+            panic!("expected Run command");
+        };
+        assert!(name.is_empty());
+        assert_eq!(item, Some("My App".to_string()));
         assert_eq!(org, None);
         assert_eq!(folder, None);
         assert_eq!(collection, None);
