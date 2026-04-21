@@ -45,12 +45,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
 
     steps:
       - uses: actions/checkout@v6
@@ -94,21 +88,12 @@ jobs:
         if: ${{ !matrix.cross }}
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Prepare artifacts (Unix)
-        if: runner.os != 'Windows'
+      - name: Prepare artifacts
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} dist/
           cd dist
           tar -czvf ${{ env.BINARY_NAME }}-${{ matrix.target }}.${{ matrix.archive }} ${{ env.BINARY_NAME }}
-
-      - name: Prepare artifacts (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist
-          Copy-Item "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" -Destination "dist/"
-          Compress-Archive -Path "dist/${{ env.BINARY_NAME }}.exe" -DestinationPath "dist/${{ env.BINARY_NAME }}-${{ matrix.target }}.${{ matrix.archive }}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7

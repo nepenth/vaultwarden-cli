@@ -1,282 +1,158 @@
 # vaultwarden-cli
 
-A pure Rust command-line client for [Vaultwarden](https://github.com/dani-garcia/vaultwarden) (Bitwarden-compatible server). Retrieve secrets from your vault for use in shell scripts, environment variables, and automation workflows.
+Agent-first, Rust-native CLI for [Vaultwarden](https://github.com/dani-garcia/vaultwarden).
 
-## Why Rust?
+This project is now intentionally scoped to autonomous agent workflows with explicit tenant isolation, runtime decryption, and Linux/macOS support only.
 
-This project is intentionally built in pure Rust rather than Node.js. Command-line tools should be fast, self-contained, and have minimal dependencies. Node.js CLI tools require a runtime, have slow startup times, and bring along thousands of transitive dependencies. Rust compiles to a single static binary that starts instantly and has zero runtime dependencies.
+## Scope (Current Direction)
 
-Additionally, this uses the system certificate store for TLS verification, not a bundled certificate store like Node.js. This means it respects your system's CA certificates and corporate proxy configurations out of the box.
+- Target platforms: Linux and macOS
+- Out of scope: Windows support
+- Backward compatibility: not guaranteed (agent-first behavior takes priority)
+- Retrieval-first today; write support is the next implementation phase
 
-## Features
+## Agent-First Design
 
-- OAuth2 client credentials authentication
-- PBKDF2 key derivation (configurable iterations)
-- AES-256-CBC + HMAC-SHA256 decryption (Bitwarden-compatible)
-- RSA-OAEP decryption for organization vault items
-- Persistent sessions with secure credential storage
-- Multiple output formats: JSON, environment exports, raw values
-- Search and filter vault items
-- Run commands with secrets injected as environment variables
-- Interpolate secrets into YAML files
+### 1. Explicit profile tenancy
+
+Every invocation must provide a profile (`--profile` or `VAULTWARDEN_PROFILE`).
+
+Profiles are stored independently:
+
+- Linux: `~/.config/vaultwarden-cli/profiles/<profile>/config.json`
+- macOS: `~/Library/Application Support/com.vaultwarden.vaultwarden-cli/profiles/<profile>/config.json`
+
+### 2. No keyring usage
+
+This CLI does not use OS keyrings. Client secrets are not persisted in keyring backends.
+
+### 3. Runtime-only vault decryption
+
+The CLI does not persist decrypted vault keys to disk. For retrieval commands, you provide the master password at runtime (`--password` or `VAULTWARDEN_PASSWORD`).
+
+### 4. Machine-parseable outputs
+
+Session/status and list outputs are JSON by default for agent orchestration.
 
 ## Installation
 
-### From GitHub Releases
-
-Download the latest prebuilt binary for your OS/arch from:
-
-```
-https://github.com/haydonryan/vaultwarden-cli/releases
-```
-
-Extract the archive and place `vaultwarden-cli` somewhere on your `PATH`.
-
-### From Source
+### From source
 
 ```bash
-git clone https://github.com/haydonryan/vaultwarden-cli.git
+git clone https://github.com/nepenth/vaultwarden-cli.git
 cd vaultwarden-cli
 cargo build --release
 ```
 
-The binary will be at `target/release/vaultwarden-cli`.
+Binary path:
+
+```bash
+target/release/vaultwarden-cli
+```
+
+## Usage
+
+## Authentication
+
+```bash
+vaultwarden-cli \
+  --profile agent-alpha \
+  login \
+  --server https://vault.example.com \
+  --client-id "$VAULTWARDEN_CLIENT_ID" \
+  --client-secret "$VAULTWARDEN_CLIENT_SECRET"
+```
+
+## Status
+
+```bash
+vaultwarden-cli --profile agent-alpha status
+```
+
+Returns JSON.
+
+## List secrets (JSON)
+
+```bash
+vaultwarden-cli \
+  --profile agent-alpha \
+  --password "$VAULTWARDEN_PASSWORD" \
+  list
+```
+
+Optional filters:
+
+```bash
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --type login
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --search github
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --org "Engineering"
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --collection "Production"
+```
+
+## Get one secret
+
+```bash
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login"
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login" --format value
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login" --format username
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login" --format env
+```
+
+Get by URI substring:
+
+```bash
+vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get-uri github.com
+```
+
+## Run a process with injected secrets
+
+```bash
+vaultwarden-cli \
+  --profile agent-alpha \
+  --password "$VAULTWARDEN_PASSWORD" \
+  run --name "My Login" -- ./deploy.sh
+```
+
+Preview injected environment variable names only:
+
+```bash
+vaultwarden-cli \
+  --profile agent-alpha \
+  --password "$VAULTWARDEN_PASSWORD" \
+  run --name "My Login" --info
+```
+
+## Logout
+
+```bash
+vaultwarden-cli --profile agent-alpha logout
+```
+
+## Security Notes
+
+- Tenant isolation is profile-scoped. Use a unique profile per agent identity.
+- Decryption keys are runtime-only and not persisted to disk.
+- Session material is stored in profile-local config with restrictive file permissions on Unix-like systems.
+- Secret exposure control is still your responsibility at orchestration boundaries (logs, shell history, process introspection).
 
 ## Development
 
-Enable the repo's pre-commit hook to run formatting, clippy, and tests before each commit:
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```
+
+Optional pre-commit hook:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-## Usage
+## Next Milestone
 
-### Authentication
-
-First, create an API key in your Vaultwarden/Bitwarden web vault under Settings > Security > Keys > API Key.
-
-```bash
-# Login with your API credentials
-vaultwarden-cli login \
-  --server https://your-vaultwarden-server.com \
-  --client-id "user.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
-  --client-secret "your-client-secret"
-
-# Or use environment variables for client credentials
-export VAULTWARDEN_CLIENT_ID="user.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-export VAULTWARDEN_CLIENT_SECRET="your-client-secret"
-vaultwarden-cli login --server https://your-vaultwarden-server.com
-
-# Unlock the vault with your master password
-vaultwarden-cli unlock
-```
-
-Note: `unlock` validates (and refreshes if needed) your API token before prompting.
-If the token is expired and cannot be refreshed, you will need to run `vaultwarden-cli login` again.
-
-### Retrieving Secrets
-
-```bash
-# List all items (plain output: env var names)
-vaultwarden-cli list
-# Output:
-# GITHUB_URI
-# GITHUB_USERNAME
-#
-# MY_NOTE
-
-# List only login items
-vaultwarden-cli list --type login
-
-# Search for items
-vaultwarden-cli list --search github
-
-# Output full item payloads as JSON
-vaultwarden-cli list --json
-
-# Get a specific item (by name or ID)
-vaultwarden-cli get "My Login"
-
-# Get item as environment variable exports
-vaultwarden-cli get "My Login" --format env
-# Output:
-# export MY_LOGIN_URI="https://example.com"
-# export MY_LOGIN_USERNAME="user@example.com"
-# export MY_LOGIN_PASSWORD="secret123"
-
-# Get just the password (useful for piping)
-vaultwarden-cli get "My Login" --format value
-vaultwarden-cli get "My Login" --password   # shorthand
-vaultwarden-cli get "My Login" -p           # short flag
-
-# Get just the username
-vaultwarden-cli get "My Login" --format username
-vaultwarden-cli get "My Login" --username   # shorthand
-vaultwarden-cli get "My Login" -u           # short flag
-
-# Get item by URI instead of name
-vaultwarden-cli get-uri github.com
-vaultwarden-cli get-uri github.com -p       # just password
-vaultwarden-cli get-uri github.com -u       # just username
-```
-
-### Using in Scripts
-
-```bash
-# Source credentials into environment
-eval $(vaultwarden-cli get "AWS Production" --format env)
-aws s3 ls
-
-# Pass password to another command
-vaultwarden-cli get "Database" --format value | psql -U admin -W
-
-# Use in a script
-#!/bin/bash
-DB_PASS=$(vaultwarden-cli get "Database" --format value)
-mysql -u root -p"$DB_PASS" -e "SELECT 1"
-```
-
-### Running Commands with Secrets
-
-Run commands with secrets injected as environment variables. The secrets are only available to the spawned process and do not persist in your shell.
-
-```bash
-# Run a command with secrets from an item injected as env vars
-vaultwarden-cli run --name "My Login" -- printenv MY_LOGIN_USERNAME MY_LOGIN_PASSWORD
-
-# `--name` is optional when you want to match by item name
-vaultwarden-cli run "My Login" -- printenv MY_LOGIN_USERNAME MY_LOGIN_PASSWORD
-
-# Run a command with multiple items (comma-separated)
-vaultwarden-cli run --name "My Login, API Token" -- ./deploy.sh
-
-# Run a bash script directly
-vaultwarden-cli run --name "My Login" -- bash ./scripts/rotate-keys.sh
-
-# Filter by organisation and/or folder instead of (or in addition to) a name
-vaultwarden-cli run --org "Acme Corp" --folder "Production" -- ./deploy.sh
-
-# Run with URI matching instead of name
-vaultwarden-cli run-uri github.com -- git push
-
-# Preview which environment variables would be injected (without values)
-vaultwarden-cli run --name "My Login" --info
-vaultwarden-cli run-uri github.com --info
-```
-
-Environment variables are named `{ITEM_NAME}_{FIELD}` where:
-- `{ITEM_NAME}` is the item name converted to uppercase with non-alphanumeric chars replaced by underscores
-- `{FIELD}` is one of: `URI`, `USERNAME`, `PASSWORD`, or custom field names
-
-### Interpolating YAML
-
-Replace placeholders like `((s3.username))` in a YAML file with Vaultwarden secrets and write to stdout.
-
-```bash
-# Replace placeholders and write to a new file
-vaultwarden-cli interpolate --file config.yml > config.rendered.yml
-
-# Safely write to a file, including replacing the input file
-vaultwarden-cli interpolate --file config.yml --output config.yml
-
-# Leave missing placeholders untouched instead of failing
-vaultwarden-cli interpolate --file config.yml --skip-missing
-```
-
-Placeholders use the format `((name.component))` where:
-- `name` matches a Vaultwarden item name (case-insensitive)
-- `component` is `username`, `password`, `uri`, or a custom field name such as `token`
-
-### Session Management
-
-```bash
-# Check current status
-vaultwarden-cli status
-
-# Lock the vault (clears decryption keys)
-vaultwarden-cli lock
-
-# Logout completely (clears all saved data)
-vaultwarden-cli logout
-```
-
-## Output Formats
-
-| Format | Description |
-|--------|-------------|
-| `json` | Full item details as JSON (default) |
-| `env` | Shell export commands for URI, USERNAME, PASSWORD, and custom fields |
-| `value` | Just the password, no newline |
-| `username` | Just the username, no newline |
-
-## Configuration
-
-Configuration is stored in:
-- Linux: `~/.config/vaultwarden-cli/`
-- macOS: `~/Library/Application Support/com.vaultwarden.vaultwarden-cli/`
-- Windows: `%APPDATA%\vaultwarden\vaultwarden-cli\`
-
-Client secrets are stored securely using the system keyring (libsecret on Linux, Keychain on macOS, Credential Manager on Windows).
-
-### Linux: D-Bus Secret Service (keyring)
-
-On Linux, secure client-secret storage requires:
-- A user D-Bus session
-- A Secret Service provider (for example `gnome-keyring`)
-
-If you see an error like `org.freedesktop.DBus.Error.ServiceUnknown` for `org.freedesktop.secrets`, install keyring support:
-
-```bash
-# Arch Linux
-sudo pacman -S dbus libsecret gnome-keyring
-
-# Ubuntu/Debian
-sudo apt update
-sudo apt install -y dbus-user-session libsecret-1-0 gnome-keyring
-
-# RHEL/CentOS/Fedora
-sudo dnf install -y dbus-daemon libsecret gnome-keyring
-```
-
-Verify the service is available in your user session:
-
-```bash
-busctl --user list | grep org.freedesktop.secrets
-```
-
-If you run in a headless/minimal environment without Secret Service, `vaultwarden-cli` still works, but you may need to pass `--client-secret` on login.
-
-## Security
-
-- Master password is never stored; only the derived encryption keys are persisted
-- Client secrets are stored in the system keyring, not plain text
-- Decryption keys can be cleared at any time with `lock`
-- All cryptographic operations use well-audited Rust crates
-
-## Building
-
-Requirements:
-- Rust 1.70+
-- On Linux: `libdbus-1-dev` and `libsecret-1-dev` for keyring support
-
-```bash
-cargo build --release
-```
-
-## Tested On
-
-- Arch Linux
-
-## Disclaimer
-
-This project was written with the assistance of AI (Claude). While it has been tested and works, please review the code and use at your own risk. Contributions and bug reports are welcome.
+Planned next major implementation: write support (create/update secrets) for agent workflows.
 
 ## License
 
 MIT
-
-## Acknowledgments
-
-- [Vaultwarden](https://github.com/dani-garcia/vaultwarden) - Bitwarden-compatible server
-- [Bitwarden](https://bitwarden.com/) - Original password manager

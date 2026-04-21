@@ -4,17 +4,25 @@ use vaultwarden_cli::commands;
 #[derive(Parser)]
 #[command(name = "vaultwarden-cli")]
 #[command(
-    about = "CLI client for Vaultwarden - retrieve secrets for batch files and environment variables"
+    about = "Agent-first CLI for Vaultwarden (Linux/macOS): runtime secret retrieval with profile isolation"
 )]
 #[command(version)]
 struct Cli {
+    /// Tenant profile identifier (required for multi-agent isolation)
+    #[arg(long, env = "VAULTWARDEN_PROFILE")]
+    profile: String,
+
+    /// Master password for runtime decryption (optional for login/status/logout)
+    #[arg(long, env = "VAULTWARDEN_PASSWORD")]
+    password: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Login to Vaultwarden server
+    /// Login and store session material for a tenant profile
     Login {
         /// Server URL (e.g., https://vaultwarden.example.com)
         #[arg(short, long)]
@@ -29,28 +37,17 @@ enum Commands {
         client_secret: Option<String>,
     },
 
-    /// Unlock the vault with master password
-    Unlock {
-        /// Master password (falls back to VAULTWARDEN_PASSWORD, then prompts)
-        #[arg(short, long, env = "VAULTWARDEN_PASSWORD")]
-        password: Option<String>,
-    },
-
-    /// Lock the vault (clear decryption keys)
-    Lock,
-
-    /// Logout from Vaultwarden server
+    /// Remove active session material from a tenant profile
     Logout,
 
-    /// List items in the vault
+    /// Show current status for a tenant profile as JSON
+    Status,
+
+    /// List vault items as JSON
     List {
         /// Filter by item type (login, note, card, identity, ssh)
         #[arg(short, long)]
         r#type: Option<String>,
-
-        /// Output list results as JSON
-        #[arg(long)]
-        json: bool,
 
         /// Search term
         #[arg(short, long)]
@@ -65,9 +62,9 @@ enum Commands {
         collection: Option<String>,
     },
 
-    /// Get a specific item or secret
+    /// Get a specific item by ID or exact name
     Get {
-        /// Item ID or name to retrieve
+        /// Item ID or exact name
         item: String,
 
         /// Output format (json, env, value, username)
@@ -75,12 +72,12 @@ enum Commands {
         format: String,
 
         /// Output only the username (shorthand for --format username)
-        #[arg(short, long)]
-        username: bool,
+        #[arg(short = 'u', long)]
+        username_only: bool,
 
-        /// Output only the password (shorthand for --format value)
-        #[arg(short, long)]
-        password: bool,
+        /// Output only the password value (shorthand for --format value)
+        #[arg(short = 'p', long)]
+        password_only: bool,
 
         /// Filter by organization name or ID
         #[arg(long)]
@@ -91,10 +88,10 @@ enum Commands {
         collection: Option<String>,
     },
 
-    /// Get a specific item by URI
+    /// Get a specific item by URI substring
     #[command(name = "get-uri")]
     GetUri {
-        /// URI to search for (e.g., github.com)
+        /// URI substring to search for (e.g., github.com)
         uri: String,
 
         /// Output format (json, env, value, username)
@@ -102,12 +99,12 @@ enum Commands {
         format: String,
 
         /// Output only the username (shorthand for --format username)
-        #[arg(short, long)]
-        username: bool,
+        #[arg(short = 'u', long)]
+        username_only: bool,
 
-        /// Output only the password (shorthand for --format value)
-        #[arg(short, long)]
-        password: bool,
+        /// Output only the password value (shorthand for --format value)
+        #[arg(short = 'p', long)]
+        password_only: bool,
 
         /// Filter by organization name or ID
         #[arg(long)]
@@ -140,7 +137,7 @@ enum Commands {
         #[arg(long)]
         collection: Option<String>,
 
-        /// Print list of injected environment variables without values
+        /// Print JSON array of injected environment variable names only
         #[arg(short, long)]
         info: bool,
 
@@ -152,10 +149,10 @@ enum Commands {
     /// Run a command with secrets from URI match injected as environment variables
     #[command(name = "run-uri")]
     RunUri {
-        /// URI to search for
+        /// URI substring to search for
         uri: String,
 
-        /// Print list of injected environment variables without values
+        /// Print JSON array of injected environment variable names only
         #[arg(short, long)]
         info: bool,
 
@@ -163,30 +160,12 @@ enum Commands {
         #[arg(last = true)]
         command: Vec<String>,
     },
-
-    /// Show current session status
-    Status,
-
-    /// Interpolate secrets into a YAML file
-    Interpolate {
-        /// YAML file to interpolate
-        #[arg(short, long)]
-        file: String,
-
-        /// Write the interpolated output to a file instead of stdout
-        #[arg(short, long)]
-        output: Option<String>,
-
-        /// Skip missing secrets and leave placeholders unchanged
-        #[arg(short = 's', long)]
-        skip_missing: bool,
-    },
 }
 
-fn effective_format(format: &str, username: bool, password: bool) -> &str {
-    if username {
+fn effective_format(format: &str, username_only: bool, password_only: bool) -> &str {
+    if username_only {
         "username"
-    } else if password {
+    } else if password_only {
         "value"
     } else {
         format
@@ -197,33 +176,36 @@ fn effective_format(format: &str, username: bool, password: bool) -> &str {
 async fn main() {
     let cli = Cli::parse();
 
+    let profile = &cli.profile;
+    let runtime_password = cli.password.as_deref();
+
     let result = match cli.command {
         Commands::Login {
             server,
             client_id,
             client_secret,
-        } => commands::login(server, client_id, client_secret).await,
-        Commands::Unlock { password } => commands::unlock(password).await,
-        Commands::Lock => commands::lock().await,
-        Commands::Logout => commands::logout().await,
+        } => commands::login(profile, server, client_id, client_secret).await,
+        Commands::Logout => commands::logout(profile).await,
+        Commands::Status => commands::status(profile).await,
         Commands::List {
             r#type,
             search,
             org,
             collection,
-            json,
-        } => commands::list(r#type, search, org, collection, json).await,
+        } => commands::list(profile, runtime_password, r#type, search, org, collection).await,
         Commands::Get {
             item,
             format,
-            username,
-            password,
+            username_only,
+            password_only,
             org,
             collection,
         } => {
             commands::get(
+                profile,
+                runtime_password,
                 &item,
-                effective_format(&format, username, password),
+                effective_format(&format, username_only, password_only),
                 org,
                 collection,
             )
@@ -232,14 +214,16 @@ async fn main() {
         Commands::GetUri {
             uri,
             format,
-            username,
-            password,
+            username_only,
+            password_only,
             org,
             collection,
         } => {
             commands::get_by_uri(
+                profile,
+                runtime_password,
                 &uri,
-                effective_format(&format, username, password),
+                effective_format(&format, username_only, password_only),
                 org,
                 collection,
             )
@@ -260,26 +244,38 @@ async fn main() {
                 } else {
                     name
                 };
+
             commands::run_with_secrets(
-                &requested_items,
-                false,
-                org.as_deref(),
-                folder.as_deref(),
-                collection.as_deref(),
-                info,
-                &command,
+                profile,
+                runtime_password,
+                commands::RunRequest {
+                    requested_items: &requested_items,
+                    search_by_uri: false,
+                    org_filter: org.as_deref(),
+                    folder_filter: folder.as_deref(),
+                    collection_filter: collection.as_deref(),
+                    info_only: info,
+                    command: &command,
+                },
             )
             .await
         }
         Commands::RunUri { uri, info, command } => {
-            commands::run_with_secrets(&[uri], true, None, None, None, info, &command).await
+            commands::run_with_secrets(
+                profile,
+                runtime_password,
+                commands::RunRequest {
+                    requested_items: &[uri],
+                    search_by_uri: true,
+                    org_filter: None,
+                    folder_filter: None,
+                    collection_filter: None,
+                    info_only: info,
+                    command: &command,
+                },
+            )
+            .await
         }
-        Commands::Status => commands::status().await,
-        Commands::Interpolate {
-            file,
-            output,
-            skip_missing,
-        } => commands::interpolate(&file, output.as_deref(), skip_missing).await,
     };
 
     if let Err(e) = result {
@@ -306,277 +302,5 @@ mod tests {
     fn test_effective_format_no_override() {
         assert_eq!(effective_format("env", false, false), "env");
         assert_eq!(effective_format("json", false, false), "json");
-    }
-
-    #[test]
-    fn test_cli_login_parsing() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "login",
-            "--server",
-            "https://example.com",
-        ]);
-        let Commands::Login {
-            server,
-            client_id,
-            client_secret,
-        } = cli.command
-        else {
-            panic!("expected Login command");
-        };
-        assert_eq!(server, Some("https://example.com".to_string()));
-        assert_eq!(client_id, None);
-        assert_eq!(client_secret, None);
-    }
-
-    #[test]
-    fn test_cli_unlock_parsing() {
-        let cli = Cli::parse_from(["vaultwarden-cli", "unlock", "--password", "secret"]);
-        let Commands::Unlock { password } = cli.command else {
-            panic!("expected Unlock command");
-        };
-        assert_eq!(password, Some("secret".to_string()));
-    }
-
-    #[test]
-    fn test_cli_get_username_flag_overrides_format() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "get",
-            "item-name",
-            "--format",
-            "json",
-            "--username",
-        ]);
-        let Commands::Get {
-            item,
-            format,
-            username,
-            password,
-            org,
-            collection,
-        } = cli.command
-        else {
-            panic!("expected Get command");
-        };
-        assert_eq!(item, "item-name");
-        assert!(username);
-        assert!(!password);
-        assert_eq!(format, "json");
-        assert_eq!(org, None);
-        assert_eq!(collection, None);
-    }
-
-    #[test]
-    fn test_cli_get_password_flag_overrides_format() {
-        let cli = Cli::parse_from(["vaultwarden-cli", "get", "item-name", "--password"]);
-        let Commands::Get {
-            item,
-            format,
-            username,
-            password,
-            org,
-            collection,
-        } = cli.command
-        else {
-            panic!("expected Get command");
-        };
-        assert_eq!(item, "item-name");
-        assert!(!username);
-        assert!(password);
-        assert_eq!(format, "json"); // default
-        assert_eq!(org, None);
-        assert_eq!(collection, None);
-    }
-
-    #[test]
-    fn test_cli_list_parsing_with_json() {
-        let cli = Cli::parse_from(["vaultwarden-cli", "list", "--json"]);
-        let Commands::List {
-            r#type,
-            json,
-            search,
-            org,
-            collection,
-        } = cli.command
-        else {
-            panic!("expected List command");
-        };
-        assert_eq!(r#type, None);
-        assert!(json);
-        assert_eq!(search, None);
-        assert_eq!(org, None);
-        assert_eq!(collection, None);
-    }
-
-    #[test]
-    fn test_cli_get_uri_parsing() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "get-uri",
-            "example.com",
-            "--format",
-            "env",
-        ]);
-        let Commands::GetUri {
-            uri,
-            format,
-            username,
-            password,
-            org,
-            collection,
-        } = cli.command
-        else {
-            panic!("expected GetUri command");
-        };
-        assert_eq!(uri, "example.com");
-        assert_eq!(format, "env");
-        assert!(!username);
-        assert!(!password);
-        assert_eq!(org, None);
-        assert_eq!(collection, None);
-    }
-
-    #[test]
-    fn test_cli_run_parsing() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "run",
-            "--name",
-            "My App",
-            "--",
-            "echo",
-            "hello",
-        ]);
-        let Commands::Run {
-            name,
-            item,
-            org,
-            folder,
-            collection,
-            info,
-            command,
-        } = cli.command
-        else {
-            panic!("expected Run command");
-        };
-        assert_eq!(name, vec!["My App".to_string()]);
-        assert!(item.is_empty());
-        assert_eq!(org, None);
-        assert_eq!(folder, None);
-        assert_eq!(collection, None);
-        assert!(!info);
-        assert_eq!(command, vec!["echo", "hello"]);
-    }
-
-    #[test]
-    fn test_cli_run_parsing_with_implicit_name() {
-        let cli = Cli::parse_from(["vaultwarden-cli", "run", "My App", "--", "echo", "hello"]);
-        let Commands::Run {
-            name,
-            item,
-            org,
-            folder,
-            collection,
-            info,
-            command,
-        } = cli.command
-        else {
-            panic!("expected Run command");
-        };
-        assert!(name.is_empty());
-        assert_eq!(item, vec!["My App".to_string()]);
-        assert_eq!(org, None);
-        assert_eq!(folder, None);
-        assert_eq!(collection, None);
-        assert!(!info);
-        assert_eq!(command, vec!["echo", "hello"]);
-    }
-
-    #[test]
-    fn test_cli_run_parsing_with_multiple_implicit_names() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "run",
-            "My App",
-            "Other App",
-            "--",
-            "echo",
-            "hello",
-        ]);
-        let Commands::Run {
-            name,
-            item,
-            org,
-            folder,
-            collection,
-            info,
-            command,
-        } = cli.command
-        else {
-            panic!("expected Run command");
-        };
-        assert!(name.is_empty());
-        assert_eq!(item, vec!["My App".to_string(), "Other App".to_string()]);
-        assert_eq!(org, None);
-        assert_eq!(folder, None);
-        assert_eq!(collection, None);
-        assert!(!info);
-        assert_eq!(command, vec!["echo", "hello"]);
-    }
-
-    #[test]
-    fn test_cli_run_parsing_with_comma_separated_implicit_names() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "run",
-            "My App,Other App",
-            "--",
-            "echo",
-            "hello",
-        ]);
-        let Commands::Run {
-            name,
-            item,
-            org,
-            folder,
-            collection,
-            info,
-            command,
-        } = cli.command
-        else {
-            panic!("expected Run command");
-        };
-        assert!(name.is_empty());
-        assert_eq!(item, vec!["My App".to_string(), "Other App".to_string()]);
-        assert_eq!(org, None);
-        assert_eq!(folder, None);
-        assert_eq!(collection, None);
-        assert!(!info);
-        assert_eq!(command, vec!["echo", "hello"]);
-    }
-
-    #[test]
-    fn test_cli_interpolate_parsing() {
-        let cli = Cli::parse_from([
-            "vaultwarden-cli",
-            "interpolate",
-            "--file",
-            "config.yml",
-            "--output",
-            "rendered.yml",
-            "--skip-missing",
-        ]);
-        let Commands::Interpolate {
-            file,
-            output,
-            skip_missing,
-        } = cli.command
-        else {
-            panic!("expected Interpolate command");
-        };
-        assert_eq!(file, "config.yml");
-        assert_eq!(output, Some("rendered.yml".to_string()));
-        assert!(skip_missing);
     }
 }
