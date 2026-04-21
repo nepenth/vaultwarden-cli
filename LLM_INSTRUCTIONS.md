@@ -34,6 +34,10 @@ auth:
   secret_ingress:
     client_secret: stdin_via_client_secret_stdin
     master_password: stdin_via_password_stdin
+status_gate:
+  logged_in: true
+  token_expired: false
+  action_if_not_ready: re_authenticate_with_login
 profile_tenancy:
   required: true
   rule: one_profile_per_agent
@@ -124,6 +128,10 @@ Status check:
 ```bash
 vaultwarden-cli --profile agent-a status
 ```
+
+Wrapper/orchestrator gate:
+- Only skip re-auth when `logged_in=true` and `token_expired=false`.
+- If `token_expired=true`, re-run `login` before secret operations.
 
 ## Read Flow
 

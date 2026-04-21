@@ -19,6 +19,14 @@ This guide is for orchestrators/LLM agents using `vaultwarden-cli` in automated 
   - stdin line 1 must be master password
   - stdin remainder must be JSON payload
 
+## Session Freshness Gate
+
+- `status` is the required preflight signal for wrappers.
+- Treat session as usable only when both conditions are true:
+  - `logged_in == true`
+  - `token_expired == false`
+- If `logged_in == false` or `token_expired == true`, run `login` before read/write commands.
+
 ## Read/Run Selection Rules
 
 - Treat name and URI lookup ambiguity as a hard stop.

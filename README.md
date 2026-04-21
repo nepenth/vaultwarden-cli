@@ -78,6 +78,10 @@ Status:
 vaultwarden-cli --profile agent-alpha status
 ```
 
+Wrapper/orchestrator rule:
+- Treat a profile as session-ready only when `logged_in=true` and `token_expired=false`.
+- If `token_expired=true`, re-authenticate with `login` before continuing.
+
 ## Retrieval Commands
 
 Lookup commands fail closed on ambiguity. If multiple items share the same exact name or URI substring match, narrow the selector or use the cipher ID.

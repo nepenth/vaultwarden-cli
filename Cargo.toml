@@ -1,6 +1,6 @@
 [package]
 name = "vaultwarden-cli"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 description = "Agent-first Vaultwarden CLI for Linux/macOS with secure multi-tenant retrieval and write workflows"
 authors = ["Haydon Ryan", "AI coders and agents"]

@@ -64,7 +64,8 @@ fn status_emits_machine_readable_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"profile\": \"agent-alpha\""))
-        .stdout(predicate::str::contains("\"logged_in\": false"));
+        .stdout(predicate::str::contains("\"logged_in\": false"))
+        .stdout(predicate::str::contains("\"token_expired\": false"));
 }
 
 #[test]
