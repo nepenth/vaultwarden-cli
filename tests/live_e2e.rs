@@ -386,6 +386,33 @@ fn ensure_text_eq(actual: &str, expected: &str, label: &str) -> Result<()> {
     }
 }
 
+fn resolve_cli_binary() -> Result<PathBuf> {
+    for key in [
+        "CARGO_BIN_EXE_vaultwarden-cli",
+        "CARGO_BIN_EXE_vaultwarden_cli",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            if !value.is_empty() {
+                return Ok(PathBuf::from(value));
+            }
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for candidate in [
+        manifest_dir.join("target/debug/vaultwarden-cli"),
+        manifest_dir.join("target/release/vaultwarden-cli"),
+    ] {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    bail!(
+        "Missing CARGO_BIN_EXE_vaultwarden-cli/CARGO_BIN_EXE_vaultwarden_cli and no local target binary was found"
+    )
+}
+
 fn run_cli(
     temp_home: &TempDir,
     label: &str,
@@ -393,8 +420,7 @@ fn run_cli(
     stdin_data: Option<&str>,
     extra_env: &[(String, String)],
 ) -> Result<String> {
-    let binary = std::env::var_os("CARGO_BIN_EXE_vaultwarden-cli")
-        .context("Missing CARGO_BIN_EXE_vaultwarden-cli for live e2e test")?;
+    let binary = resolve_cli_binary()?;
 
     let mut command = Command::new(binary);
     command.args(args);
@@ -429,12 +455,19 @@ fn run_cli(
         .with_context(|| format!("Failed to wait for {label} command"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.trim();
-        if detail.is_empty() {
-            bail!("{label} command failed with status {}", output.status);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        if !stderr.is_empty() || !stdout.is_empty() {
+            bail!(
+                "{label} command failed with status {} (stderr: {:?}, stdout: {:?})",
+                output.status,
+                stderr,
+                stdout
+            );
         }
-        bail!("{label} command failed: {detail}");
+
+        bail!("{label} command failed with status {}", output.status);
     }
 
     String::from_utf8(output.stdout).with_context(|| format!("Non-utf8 stdout from {label}"))
