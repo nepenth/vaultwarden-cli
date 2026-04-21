@@ -1821,7 +1821,7 @@ pub async fn write_move(
     profile: &str,
     password_stdin: bool,
     cipher_id: &str,
-    _if_revision: &str,
+    if_revision: &str,
     folder_id: Option<&str>,
     favorite: Option<bool>,
     dry_run: bool,
@@ -1847,6 +1847,22 @@ pub async fn write_move(
             .ok_or_else(|| {
                 make_write_error("NOT_FOUND", "Cipher not found", false, "verify_target")
             })?;
+        let current_revision = current.revision_date.as_deref().ok_or_else(|| {
+            make_write_error(
+                "CONFLICT_STALE_REVISION",
+                "Target cipher is missing revision date; resync and retry",
+                true,
+                "resync_and_retry",
+            )
+        })?;
+        if current_revision != if_revision {
+            return Err(make_write_error(
+                "CONFLICT_STALE_REVISION",
+                "The client copy of this cipher is out of date. Resync the client and try again.",
+                true,
+                "resync_and_retry",
+            ));
+        }
 
         if dry_run {
             return write_success(
