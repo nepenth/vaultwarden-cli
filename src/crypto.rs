@@ -1,6 +1,7 @@
-use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use getrandom::fill as getrandom_fill;
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use pbkdf2::pbkdf2_hmac;
@@ -9,6 +10,7 @@ use sha1::Sha1;
 use sha2::Sha256;
 
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
 #[derive(Clone, Debug)]
 pub struct CryptoKeys {
@@ -17,6 +19,50 @@ pub struct CryptoKeys {
 }
 
 impl CryptoKeys {
+    /// Encrypt bytes as a Bitwarden encrypted string.
+    /// Format: `2.<iv>|<ciphertext>|<mac>`.
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<String> {
+        let mut iv = [0u8; 16];
+        getrandom_fill(&mut iv)
+            .map_err(|e| anyhow::anyhow!("Failed to generate random IV: {}", e))?;
+        self.encrypt_with_iv(plaintext, &iv)
+    }
+
+    /// Encrypt a UTF-8 string as a Bitwarden encrypted string.
+    pub fn encrypt_string(&self, plaintext: &str) -> Result<String> {
+        self.encrypt(plaintext.as_bytes())
+    }
+
+    /// Encrypt with a caller-provided IV (test support and deterministic vectors).
+    pub fn encrypt_with_iv(&self, plaintext: &[u8], iv: &[u8]) -> Result<String> {
+        if iv.len() != 16 {
+            anyhow::bail!("IV must be 16 bytes, got {}", iv.len());
+        }
+
+        let mut buf = plaintext.to_vec();
+        let msg_len = buf.len();
+        buf.resize(msg_len + 16, 0);
+
+        let ciphertext = Aes256CbcEnc::new_from_slices(&self.enc_key, iv)
+            .map_err(|e| anyhow::anyhow!("AES init failed: {}", e))?
+            .encrypt_padded_mut::<Pkcs7>(&mut buf, msg_len)
+            .map_err(|e| anyhow::anyhow!("AES encrypt failed: {}", e))?
+            .to_vec();
+
+        let mut hmac = Hmac::<Sha256>::new_from_slice(&self.mac_key)
+            .map_err(|e| anyhow::anyhow!("HMAC init failed: {}", e))?;
+        hmac.update(iv);
+        hmac.update(&ciphertext);
+        let mac = hmac.finalize().into_bytes();
+
+        Ok(format!(
+            "2.{}|{}|{}",
+            BASE64.encode(iv),
+            BASE64.encode(&ciphertext),
+            BASE64.encode(mac)
+        ))
+    }
+
     /// Derive the master key from password and email using PBKDF2
     pub fn derive_master_key(password: &str, email: &str, iterations: u32) -> Vec<u8> {
         let email_lower = email.to_lowercase();
@@ -569,6 +615,18 @@ pub(crate) mod tests {
             let decrypted = keys.decrypt(&encrypted).unwrap();
 
             assert_eq!(decrypted, plaintext);
+        }
+
+        #[test]
+        fn test_encrypt_decrypt_roundtrip() {
+            let keys = CryptoKeys {
+                enc_key: [0x42u8; 32].to_vec(),
+                mac_key: [0x43u8; 32].to_vec(),
+            };
+
+            let encrypted = keys.encrypt_string("hello-agent").unwrap();
+            let decrypted = keys.decrypt_to_string(&encrypted).unwrap();
+            assert_eq!(decrypted, "hello-agent");
         }
 
         #[test]

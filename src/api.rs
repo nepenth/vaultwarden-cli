@@ -1,7 +1,16 @@
 use crate::config::Config;
-use crate::models::{CipherListResponse, SyncResponse, TokenResponse};
+use crate::models::{Cipher, CipherListResponse, SyncResponse, TokenResponse};
 use anyhow::{Context, Result};
 use reqwest::Client;
+use serde_json::{Value, json};
+
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} failed ({status}): {body}")]
+pub struct ApiErrorDetail {
+    pub operation: String,
+    pub status: u16,
+    pub body: String,
+}
 
 pub struct ApiClient {
     client: Client,
@@ -87,6 +96,95 @@ impl ApiClient {
         .await
     }
 
+    pub async fn create_cipher(&self, access_token: &str, payload: &Value) -> Result<Cipher> {
+        self.post_json(
+            "/api/ciphers",
+            access_token,
+            payload,
+            "cipher create",
+            "Cipher create",
+            "Failed to parse cipher create response",
+        )
+        .await
+    }
+
+    pub async fn update_cipher(
+        &self,
+        access_token: &str,
+        cipher_id: &str,
+        payload: &Value,
+    ) -> Result<Cipher> {
+        self.put_json(
+            &format!("/api/ciphers/{}", cipher_id),
+            access_token,
+            payload,
+            "cipher update",
+            "Cipher update",
+            "Failed to parse cipher update response",
+        )
+        .await
+    }
+
+    pub async fn create_org_cipher(
+        &self,
+        access_token: &str,
+        payload: &Value,
+        collection_ids: &[String],
+    ) -> Result<Cipher> {
+        let body = json!({
+            "cipher": payload,
+            "collectionIds": collection_ids
+        });
+
+        self.post_json(
+            "/api/ciphers/create",
+            access_token,
+            &body,
+            "org cipher create",
+            "Org cipher create",
+            "Failed to parse org cipher create response",
+        )
+        .await
+    }
+
+    pub async fn update_collections_v2(
+        &self,
+        access_token: &str,
+        cipher_id: &str,
+        collection_ids: &[String],
+    ) -> Result<Value> {
+        self.put_json(
+            &format!("/api/ciphers/{}/collections_v2", cipher_id),
+            access_token,
+            &json!({ "collectionIds": collection_ids }),
+            "collections_v2 update",
+            "Collections update",
+            "Failed to parse collections update response",
+        )
+        .await
+    }
+
+    pub async fn update_cipher_partial(
+        &self,
+        access_token: &str,
+        cipher_id: &str,
+        folder_id: Option<&str>,
+        favorite: bool,
+    ) -> Result<Cipher> {
+        self.put_json(
+            &format!("/api/ciphers/{}/partial", cipher_id),
+            access_token,
+            &json!({
+                "folderId": folder_id,
+                "favorite": favorite
+            }),
+            "cipher partial update",
+            "Cipher partial update",
+            "Failed to parse partial update response",
+        )
+        .await
+    }
+
     // Check server status/health
     pub async fn check_server(&self) -> Result<bool> {
         let url = format!("{}/alive", self.base_url);
@@ -121,7 +219,12 @@ impl ApiClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{} failed ({}): {}", error_prefix, status, body);
+            return Err(ApiErrorDetail {
+                operation: error_prefix.to_string(),
+                status: status.as_u16(),
+                body,
+            }
+            .into());
         }
 
         response
@@ -150,7 +253,84 @@ impl ApiClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{} failed ({}): {}", error_prefix, status, body);
+            return Err(ApiErrorDetail {
+                operation: error_prefix.to_string(),
+                status: status.as_u16(),
+                body,
+            }
+            .into());
+        }
+
+        response
+            .json::<T>()
+            .await
+            .with_context(|| parse_context.to_string())
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        access_token: &str,
+        payload: &Value,
+        operation: &str,
+        error_prefix: &str,
+        parse_context: &str,
+    ) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(access_token)
+            .json(payload)
+            .send()
+            .await
+            .with_context(|| format!("Failed to send {} request", operation))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiErrorDetail {
+                operation: error_prefix.to_string(),
+                status: status.as_u16(),
+                body,
+            }
+            .into());
+        }
+
+        response
+            .json::<T>()
+            .await
+            .with_context(|| parse_context.to_string())
+    }
+
+    async fn put_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        access_token: &str,
+        payload: &Value,
+        operation: &str,
+        error_prefix: &str,
+        parse_context: &str,
+    ) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .client
+            .put(&url)
+            .bearer_auth(access_token)
+            .json(payload)
+            .send()
+            .await
+            .with_context(|| format!("Failed to send {} request", operation))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiErrorDetail {
+                operation: error_prefix.to_string(),
+                status: status.as_u16(),
+                body,
+            }
+            .into());
         }
 
         response

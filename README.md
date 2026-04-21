@@ -1,42 +1,40 @@
 # vaultwarden-cli
 
-Agent-first, Rust-native CLI for [Vaultwarden](https://github.com/dani-garcia/vaultwarden).
+Agent-first, Rust-native CLI for [Vaultwarden](https://github.com/dani-garcia/vaultwarden), scoped to secure multi-agent workflows.
 
-This project is now intentionally scoped to autonomous agent workflows with explicit tenant isolation, runtime decryption, and Linux/macOS support only.
+## Scope
 
-## Scope (Current Direction)
+- Platforms: Linux and macOS
+- Out of scope: Windows
+- Backward compatibility: not guaranteed (agent-first behavior has priority)
+- Multi-tenant execution: one profile per agent identity
 
-- Target platforms: Linux and macOS
-- Out of scope: Windows support
-- Backward compatibility: not guaranteed (agent-first behavior takes priority)
-- Retrieval-first today; write support is the next implementation phase
+## Security Model
 
-## Agent-First Design
+1. Explicit profile tenancy
+- Every command requires `--profile` (or `VAULTWARDEN_PROFILE`).
+- Profile state is isolated under per-profile directories.
 
-### 1. Explicit profile tenancy
+2. No keyring support
+- OS keyrings are not used.
+- Client secrets are never persisted to keyring backends.
 
-Every invocation must provide a profile (`--profile` or `VAULTWARDEN_PROFILE`).
+3. Runtime-only decryption keys
+- Decrypted vault keys are not persisted to disk.
+- Runtime decryption uses master password provided via stdin.
 
-Profiles are stored independently:
+4. Secret ingress hardening
+- Secret-bearing CLI flags were removed.
+- Use `--password-stdin` and `--client-secret-stdin`.
+- Write commands with `--input -` expect:
+  - stdin line 1: master password
+  - stdin remainder: write JSON payload
 
-- Linux: `~/.config/vaultwarden-cli/profiles/<profile>/config.json`
-- macOS: `~/Library/Application Support/com.vaultwarden.vaultwarden-cli/profiles/<profile>/config.json`
-
-### 2. No keyring usage
-
-This CLI does not use OS keyrings. Client secrets are not persisted in keyring backends.
-
-### 3. Runtime-only vault decryption
-
-The CLI does not persist decrypted vault keys to disk. For retrieval commands, you provide the master password at runtime (`--password` or `VAULTWARDEN_PASSWORD`).
-
-### 4. Machine-parseable outputs
-
-Session/status and list outputs are JSON by default for agent orchestration.
+5. Profile state safety
+- Per-profile file locking prevents concurrent session corruption.
+- Config updates use atomic write/rename semantics.
 
 ## Installation
-
-### From source
 
 ```bash
 git clone https://github.com/nepenth/vaultwarden-cli.git
@@ -44,96 +42,180 @@ cd vaultwarden-cli
 cargo build --release
 ```
 
-Binary path:
+Binary:
 
 ```bash
 target/release/vaultwarden-cli
 ```
 
-## Usage
-
 ## Authentication
 
-```bash
-vaultwarden-cli \
-  --profile agent-alpha \
-  login \
-  --server https://vault.example.com \
-  --client-id "$VAULTWARDEN_CLIENT_ID" \
-  --client-secret "$VAULTWARDEN_CLIENT_SECRET"
-```
-
-## Status
+Login with client secret from stdin:
 
 ```bash
-vaultwarden-cli --profile agent-alpha status
+printf '%s' "$VAULTWARDEN_CLIENT_SECRET" | \
+  vaultwarden-cli \
+    --profile agent-alpha \
+    login \
+    --server https://vault.example.com \
+    --client-id "$VAULTWARDEN_CLIENT_ID" \
+    --client-secret-stdin
 ```
 
-Returns JSON.
-
-## List secrets (JSON)
-
-```bash
-vaultwarden-cli \
-  --profile agent-alpha \
-  --password "$VAULTWARDEN_PASSWORD" \
-  list
-```
-
-Optional filters:
-
-```bash
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --type login
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --search github
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --org "Engineering"
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" list --collection "Production"
-```
-
-## Get one secret
-
-```bash
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login"
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login" --format value
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login" --format username
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get "My Login" --format env
-```
-
-Get by URI substring:
-
-```bash
-vaultwarden-cli --profile agent-alpha --password "$VAULTWARDEN_PASSWORD" get-uri github.com
-```
-
-## Run a process with injected secrets
-
-```bash
-vaultwarden-cli \
-  --profile agent-alpha \
-  --password "$VAULTWARDEN_PASSWORD" \
-  run --name "My Login" -- ./deploy.sh
-```
-
-Preview injected environment variable names only:
-
-```bash
-vaultwarden-cli \
-  --profile agent-alpha \
-  --password "$VAULTWARDEN_PASSWORD" \
-  run --name "My Login" --info
-```
-
-## Logout
+Logout:
 
 ```bash
 vaultwarden-cli --profile agent-alpha logout
 ```
 
-## Security Notes
+Status:
 
-- Tenant isolation is profile-scoped. Use a unique profile per agent identity.
-- Decryption keys are runtime-only and not persisted to disk.
-- Session material is stored in profile-local config with restrictive file permissions on Unix-like systems.
-- Secret exposure control is still your responsibility at orchestration boundaries (logs, shell history, process introspection).
+```bash
+vaultwarden-cli --profile agent-alpha status
+```
+
+## Retrieval Commands
+
+Provide master password on stdin:
+
+```bash
+printf '%s' "$VAULTWARDEN_PASSWORD" | \
+  vaultwarden-cli --profile agent-alpha --password-stdin list
+```
+
+Get one item:
+
+```bash
+printf '%s' "$VAULTWARDEN_PASSWORD" | \
+  vaultwarden-cli --profile agent-alpha --password-stdin get "My Login"
+```
+
+Run with injected env vars:
+
+```bash
+printf '%s' "$VAULTWARDEN_PASSWORD" | \
+  vaultwarden-cli --profile agent-alpha --password-stdin run --name "My Login" -- ./deploy.sh
+```
+
+## Write Commands (JSON v1)
+
+Supported types in initial write GA:
+- `login`
+- `note`
+
+### Create
+
+```bash
+{
+  printf '%s\n' "$VAULTWARDEN_PASSWORD"
+  cat <<'JSON'
+{"type":"login","name":"svc/github","login":{"username":"bot","password":"pw","uris":[{"uri":"https://github.com"}]}}
+JSON
+} | vaultwarden-cli --profile agent-alpha --password-stdin write create --input -
+```
+
+### Update
+
+```bash
+{
+  printf '%s\n' "$VAULTWARDEN_PASSWORD"
+  cat <<'JSON'
+{"type":"note","name":"runtime/flag","note":{"secure_note_type":0},"notes":"rotated"}
+JSON
+} | vaultwarden-cli --profile agent-alpha --password-stdin \
+      write update --id "<cipher_id>" --if-revision "<revisionDate>" --input -
+```
+
+### Upsert
+
+```bash
+{
+  printf '%s\n' "$VAULTWARDEN_PASSWORD"
+  cat <<'JSON'
+{"type":"login","name":"svc/github","login":{"username":"bot","password":"pw","uris":[{"uri":"https://github.com"}]}}
+JSON
+} | vaultwarden-cli --profile agent-alpha --password-stdin \
+      write upsert --match name_uri --scope personal --input -
+```
+
+### Helper Mutations
+
+Rotate password:
+
+```bash
+{
+  printf '%s\n' "$VAULTWARDEN_PASSWORD"
+  echo '{"new_password":"new-secret"}'
+} | vaultwarden-cli --profile agent-alpha --password-stdin \
+      write rotate-password --id "<cipher_id>" --if-revision "<revisionDate>" --input -
+```
+
+Patch fields:
+
+```bash
+{
+  printf '%s\n' "$VAULTWARDEN_PASSWORD"
+  echo '{"fields":[{"name":"api_key","value":"abc","field_type":1}]}'
+} | vaultwarden-cli --profile agent-alpha --password-stdin \
+      write patch-fields --id "<cipher_id>" --if-revision "<revisionDate>" --input -
+```
+
+Move/favorite patch:
+
+```bash
+printf '%s' "$VAULTWARDEN_PASSWORD" | \
+  vaultwarden-cli --profile agent-alpha --password-stdin \
+    write move --id "<cipher_id>" --if-revision "<revisionDate>" --folder-id "<folder_id>" --favorite true
+```
+
+## Write Output Contract
+
+Success:
+
+```json
+{
+  "ok": true,
+  "operation": "create",
+  "id": "cipher-id",
+  "revision_date": "2026-04-21T12:00:00.000000Z",
+  "organization_id": null,
+  "warnings": []
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "...",
+    "retryable": false,
+    "action": "fix_input"
+  }
+}
+```
+
+Stable write error codes:
+- `VALIDATION_ERROR`
+- `AUTH_ERROR`
+- `PERMISSION_DENIED`
+- `NOT_FOUND`
+- `CONFLICT_STALE_REVISION`
+- `AMBIGUOUS_MATCH`
+- `SERVER_ERROR`
+
+## LLM/Agent Hints
+
+- Use one profile per agent identity.
+- Never pass secrets in CLI args.
+- Use stdin only for secrets.
+- On `CONFLICT_STALE_REVISION`: resync, then retry.
+- Retry only when `retryable=true`.
+- Avoid logging full write input payloads.
+
+See [AGENT_GUIDE.md](AGENT_GUIDE.md) for detailed automation guidance.
 
 ## Development
 
@@ -148,10 +230,6 @@ Optional pre-commit hook:
 ```bash
 git config core.hooksPath .githooks
 ```
-
-## Next Milestone
-
-Planned next major implementation: write support (create/update secrets) for agent workflows.
 
 ## License
 

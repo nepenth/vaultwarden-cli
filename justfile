@@ -4,6 +4,7 @@ test:
     cargo audit
     cargo deny check all
     cargo test
+    ./scripts/security-regression.sh
 
 pre-commit:
     ./scripts/scan-staged-secrets.sh
@@ -12,6 +13,7 @@ pre-commit:
     cargo audit
     cargo deny check all
     cargo test
+    ./scripts/security-regression.sh
 
 release *args:
     git pull --rebase

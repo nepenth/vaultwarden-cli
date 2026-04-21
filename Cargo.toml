@@ -2,7 +2,7 @@
 name = "vaultwarden-cli"
 version = "0.5.1"
 edition = "2024"
-description = "CLI client for Vaultwarden - retrieve secrets for batch files and environment variables"
+description = "Agent-first Vaultwarden CLI for Linux/macOS with secure multi-tenant retrieval and write workflows"
 authors = ["Haydon Ryan", "AI coders and agents"]
 license = "MIT"
 
@@ -15,6 +15,8 @@ serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "2.0"
 directories = "6.0"
+fs2 = "0.4"
+getrandom = "0.3"
 base64 = "0.22"
 aes = "0.8"
 cbc = "0.1"

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vaultwarden-cli write output v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "operation", "id", "warnings"],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "operation": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision_date": {
+          "type": ["string", "null"]
+        },
+        "organization_id": {
+          "type": ["string", "null"]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "error"],
+      "properties": {
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable", "action"],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "action": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

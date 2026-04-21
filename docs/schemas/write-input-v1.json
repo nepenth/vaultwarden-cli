@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vaultwarden-cli write input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "name"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["login", "note"]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notes": {
+      "type": "string"
+    },
+    "folder_id": {
+      "type": "string"
+    },
+    "organization_id": {
+      "type": "string"
+    },
+    "collection_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "favorite": {
+      "type": "boolean"
+    },
+    "reprompt": {
+      "type": "integer",
+      "enum": [0, 1]
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "string"
+          },
+          "field_type": {
+            "type": "integer",
+            "enum": [0, 1, 2, 3]
+          }
+        }
+      }
+    },
+    "login": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "totp": {
+          "type": "string"
+        },
+        "uris": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["uri"],
+            "properties": {
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              },
+              "match": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secure_note_type": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

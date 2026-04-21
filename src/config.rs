@@ -1,12 +1,19 @@
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
+pub struct ProfileLock {
+    file: File,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -24,6 +31,45 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn acquire_profile_lock(profile: &str) -> Result<ProfileLock> {
+        let dir = Self::config_dir(profile)?;
+        #[cfg(unix)]
+        {
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder
+                .create(&dir)
+                .with_context(|| format!("Failed to create config directory {:?}", dir))?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(&dir)
+                .with_context(|| format!("Failed to create config directory {:?}", dir))?;
+        }
+
+        let lock_path = dir.join(".lock");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open profile lock file {:?}", lock_path))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("Failed to set permissions on {:?}", lock_path))?;
+        }
+
+        file.lock_exclusive()
+            .with_context(|| format!("Failed to acquire lock on {:?}", lock_path))?;
+
+        Ok(ProfileLock { file })
+    }
+
     pub fn validate_profile(profile: &str) -> Result<()> {
         if profile.is_empty() {
             anyhow::bail!("Profile must not be empty")
@@ -93,6 +139,11 @@ impl Config {
         }
 
         let content = serde_json::to_vec_pretty(self)?;
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before UNIX epoch")
+            .as_nanos();
+        let tmp_path = path.with_extension(format!("json.tmp.{}", nanos));
 
         #[cfg(unix)]
         {
@@ -103,17 +154,28 @@ impl Config {
                 .truncate(true)
                 .write(true)
                 .mode(0o600)
-                .open(&path)
-                .with_context(|| format!("Failed to open config path {:?} for writing", path))?;
+                .open(&tmp_path)
+                .with_context(|| {
+                    format!("Failed to open temp config path {:?} for writing", tmp_path)
+                })?;
             file.write_all(&content)
-                .with_context(|| format!("Failed to write config to {:?}", path))?;
+                .with_context(|| format!("Failed to write temp config to {:?}", tmp_path))?;
+            file.sync_all()
+                .with_context(|| format!("Failed to sync temp config {:?}", tmp_path))?;
         }
 
         #[cfg(not(unix))]
         {
-            fs::write(&path, content)
-                .with_context(|| format!("Failed to write config to {:?}", path))?;
+            fs::write(&tmp_path, content)
+                .with_context(|| format!("Failed to write temp config to {:?}", tmp_path))?;
         }
+
+        fs::rename(&tmp_path, &path).with_context(|| {
+            format!(
+                "Failed to atomically replace config {:?} -> {:?}",
+                tmp_path, path
+            )
+        })?;
 
         Ok(())
     }
@@ -133,6 +195,12 @@ impl Config {
 
     pub fn get_server(&self) -> Option<&str> {
         self.server.as_deref()
+    }
+}
+
+impl Drop for ProfileLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
     }
 }
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::str::FromStr;
 
 // OAuth2 Token Response
@@ -143,6 +144,14 @@ pub struct Cipher {
     pub r#type: u8,
     #[serde(alias = "OrganizationId", alias = "organizationId")]
     pub organization_id: Option<String>,
+    #[serde(alias = "Key", alias = "key")]
+    pub key: Option<String>,
+    #[serde(alias = "RevisionDate", alias = "revisionDate")]
+    pub revision_date: Option<String>,
+    #[serde(alias = "Favorite", alias = "favorite")]
+    pub favorite: Option<bool>,
+    #[serde(alias = "Reprompt", alias = "reprompt")]
+    pub reprompt: Option<i32>,
     #[serde(alias = "Name", alias = "name")]
     pub name: Option<String>,
     #[serde(alias = "Notes", alias = "notes")]
@@ -379,6 +388,81 @@ pub struct FieldOutput {
     pub hidden: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct WriteInputV1 {
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub name: String,
+    pub notes: Option<String>,
+    pub folder_id: Option<String>,
+    pub organization_id: Option<String>,
+    pub collection_ids: Option<Vec<String>>,
+    pub favorite: Option<bool>,
+    pub reprompt: Option<i32>,
+    pub fields: Option<Vec<WriteFieldV1>>,
+    pub login: Option<WriteLoginV1>,
+    pub note: Option<WriteNoteV1>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct WriteFieldV1 {
+    pub name: String,
+    pub value: Option<String>,
+    #[serde(default)]
+    pub field_type: Option<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct WriteLoginV1 {
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub totp: Option<String>,
+    pub uris: Option<Vec<WriteUriV1>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct WriteUriV1 {
+    pub uri: String,
+    pub r#match: Option<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct WriteNoteV1 {
+    #[serde(default)]
+    pub secure_note_type: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteCommandSuccess {
+    pub ok: bool,
+    pub operation: String,
+    pub id: String,
+    pub revision_date: Option<String>,
+    pub organization_id: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteCommandErrorEnvelope {
+    pub ok: bool,
+    pub error: WriteCommandErrorBody,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteCommandErrorBody {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+    pub action: String,
+}
+
+pub type WriteCipherPayload = Value;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,6 +558,10 @@ mod tests {
                 id: "test-id".to_string(),
                 r#type: 1,
                 organization_id: None,
+                key: None,
+                revision_date: None,
+                favorite: None,
+                reprompt: None,
                 name: Some("encrypted-name".to_string()),
                 notes: Some("encrypted-notes".to_string()),
                 folder_id: None,
@@ -505,6 +593,10 @@ mod tests {
                 id: "test-id".to_string(),
                 r#type: 1,
                 organization_id: None,
+                key: None,
+                revision_date: None,
+                favorite: None,
+                reprompt: None,
                 name: None,
                 notes: None,
                 folder_id: None,
@@ -591,6 +683,10 @@ mod tests {
                 id: "test".to_string(),
                 r#type: 1,
                 organization_id: None,
+                key: None,
+                revision_date: None,
+                favorite: None,
+                reprompt: None,
                 name: None,
                 notes: None,
                 folder_id: None,
@@ -648,6 +744,10 @@ mod tests {
                 id: "test".to_string(),
                 r#type: 1,
                 organization_id: None,
+                key: None,
+                revision_date: None,
+                favorite: None,
+                reprompt: None,
                 name: None,
                 notes: None,
                 folder_id: None,
