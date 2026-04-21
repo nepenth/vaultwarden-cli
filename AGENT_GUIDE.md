@@ -14,9 +14,15 @@ This guide is for orchestrators/LLM agents using `vaultwarden-cli` in automated 
 - Provide:
   - master password via `--password-stdin`
   - client secret via `--client-secret-stdin`
+- Use `https://` server URLs unless you are explicitly talking to a localhost or other loopback test instance.
 - For write commands with `--input -`:
   - stdin line 1 must be master password
   - stdin remainder must be JSON payload
+
+## Read/Run Selection Rules
+
+- Treat name and URI lookup ambiguity as a hard stop.
+- If `get`, `get-uri`, `run`, or `run-uri` reports multiple matches, narrow the selector or switch to an exact cipher ID.
 
 ## Write Retry Strategy
 

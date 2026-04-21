@@ -34,6 +34,10 @@ Agent-first, Rust-native CLI for [Vaultwarden](https://github.com/dani-garcia/va
 - Per-profile file locking prevents concurrent session corruption.
 - Config updates use atomic write/rename semantics.
 
+6. Transport guardrails
+- Server URLs must use `https://` unless they target localhost or another loopback address for local testing.
+- HTTP requests use bounded connect/request timeouts so stalled agent workflows fail instead of hanging indefinitely.
+
 ## Installation
 
 ```bash
@@ -75,6 +79,8 @@ vaultwarden-cli --profile agent-alpha status
 ```
 
 ## Retrieval Commands
+
+Lookup commands fail closed on ambiguity. If multiple items share the same exact name or URI substring match, narrow the selector or use the cipher ID.
 
 Provide master password on stdin:
 
@@ -211,6 +217,7 @@ Stable write error codes:
 - Use one profile per agent identity.
 - Never pass secrets in CLI args.
 - Use stdin only for secrets.
+- Expect `get`, `get-uri`, `run`, and `run-uri` to fail on ambiguous matches; use unique IDs or stricter filters.
 - On `CONFLICT_STALE_REVISION`: resync, then retry.
 - Retry only when `retryable=true`.
 - Avoid logging full write input payloads.
@@ -224,6 +231,14 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
+
+Local live end-to-end testing against a real Vaultwarden account is available through an ignored integration test plus a wrapper script that reads runtime-only configuration from env vars, local secret files, and an untracked fixture file:
+
+```bash
+./scripts/live-e2e.sh
+```
+
+See [docs/live-e2e.md](docs/live-e2e.md) for setup and safety guidance. Use the committed [.env.live-e2e.example](.env.live-e2e.example) and [docs/live-e2e.fixture.example.json](docs/live-e2e.fixture.example.json) as templates, and keep your real `.env.live-e2e.local` and `.live-e2e/fixture.json` untracked.
 
 Optional pre-commit hook:
 

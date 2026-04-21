@@ -21,3 +21,6 @@ release *args:
 
 install:
     cargo install --path .
+
+test-live-e2e *args:
+    ./scripts/live-e2e.sh {{args}}

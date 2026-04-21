@@ -56,6 +56,7 @@ security_rules:
   - do_not_log_plaintext_payloads_or_decrypted_values
   - treat_ambiguous_or_stale_write_errors_as_hard_stops
   - isolate_profiles_per_agent_identity
+  - prefer_https_except_for_loopback_test_servers
 ```
 
 ## Hard Rules (Do Not Violate)
@@ -67,6 +68,7 @@ security_rules:
 - OAuth client secret: `--client-secret-stdin`
 4. Do not log plaintext payloads, decrypted values, passwords, tokens, or client secrets.
 5. Treat `AMBIGUOUS_MATCH` and `CONFLICT_STALE_REVISION` as safety stops, not soft warnings.
+6. Use `https://` server URLs unless the target is a localhost or loopback test server.
 
 ## Master Agent Setup Workflow
 
@@ -138,6 +140,8 @@ Get by id or exact name:
 secure_master_password_source | \
   vaultwarden-cli --profile agent-a --password-stdin get "$CIPHER_ID_OR_NAME"
 ```
+
+If name or URI-based lookup is ambiguous, stop and narrow the selector or switch to the exact cipher ID.
 
 ## Write Flow (JSON v1)
 

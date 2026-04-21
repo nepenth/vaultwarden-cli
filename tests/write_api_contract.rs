@@ -98,3 +98,20 @@ async fn partial_update_uses_partial_route() {
 
     assert_eq!(cipher.id, "cipher-1");
 }
+
+#[tokio::test]
+async fn delete_cipher_uses_expected_route_and_auth() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/ciphers/cipher-1"))
+        .and(header("authorization", "Bearer test-token"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let api = ApiClient::new(&server.uri()).expect("client");
+    api.delete_cipher("test-token", "cipher-1")
+        .await
+        .expect("delete should succeed");
+}

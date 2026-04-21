@@ -2,3 +2,5 @@
 /.codex
 sbom.cdx.json
 test.yml
+.env.live-e2e.local
+.live-e2e/

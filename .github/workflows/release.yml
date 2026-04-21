@@ -67,7 +67,7 @@ jobs:
 
       - name: Install cross
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --tag v0.2.5 --locked
 
       - name: Cache cargo registry
         uses: actions/cache@v5
@@ -114,7 +114,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-sbom
-        run: cargo install cargo-sbom
+        run: cargo install cargo-sbom --version 0.10.0 --locked
 
       - name: Generate SBOM (CycloneDX)
         run: cargo sbom --output-format cyclone_dx_json_1_4 > sbom.cdx.json

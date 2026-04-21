@@ -3,6 +3,8 @@ use crate::models::{Cipher, CipherListResponse, SyncResponse, TokenResponse};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::{Value, json};
+use std::net::IpAddr;
+use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{operation} failed ({status}): {body}")]
@@ -17,14 +19,47 @@ pub struct ApiClient {
     base_url: String,
 }
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
 impl ApiClient {
     pub fn new(base_url: &str) -> Result<Self> {
+        let parsed_url = reqwest::Url::parse(base_url).context("Invalid server URL")?;
+        let scheme = parsed_url.scheme();
+
+        if scheme == "http" {
+            let host = parsed_url
+                .host_str()
+                .context("Server URL must include a host")?;
+            if !is_loopback_host(host) {
+                anyhow::bail!(
+                    "Insecure http:// server URLs are only allowed for localhost or loopback addresses"
+                );
+            }
+        } else if scheme != "https" {
+            anyhow::bail!("Unsupported server URL scheme '{}'", scheme);
+        }
+
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+            anyhow::bail!("Server URL must not include embedded credentials");
+        }
+
         let client = Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .context("Failed to create HTTP client")?;
 
         // Normalize base URL (remove trailing slash)
-        let base_url = base_url.trim_end_matches('/').to_string();
+        let base_url = parsed_url.as_str().trim_end_matches('/').to_string();
 
         Ok(Self { client, base_url })
     }
@@ -185,6 +220,30 @@ impl ApiClient {
         .await
     }
 
+    pub async fn delete_cipher(&self, access_token: &str, cipher_id: &str) -> Result<()> {
+        let url = format!("{}/api/ciphers/{}", self.base_url, cipher_id);
+        let response = self
+            .client
+            .delete(&url)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .context("Failed to send cipher delete request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiErrorDetail {
+                operation: "Cipher delete".to_string(),
+                status: status.as_u16(),
+                body,
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
     // Check server status/health
     pub async fn check_server(&self) -> Result<bool> {
         let url = format!("{}/alive", self.base_url);
@@ -337,5 +396,32 @@ impl ApiClient {
             .json::<T>()
             .await
             .with_context(|| parse_context.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_client_allows_https_servers() {
+        assert!(ApiClient::new("https://vault.example.com").is_ok());
+    }
+
+    #[test]
+    fn api_client_rejects_non_loopback_http_servers() {
+        let err = ApiClient::new("http://vault.example.com")
+            .err()
+            .expect("non-loopback http should be rejected");
+        assert!(
+            err.to_string()
+                .contains("Insecure http:// server URLs are only allowed")
+        );
+    }
+
+    #[test]
+    fn api_client_allows_loopback_http_servers() {
+        assert!(ApiClient::new("http://127.0.0.1:8080").is_ok());
+        assert!(ApiClient::new("http://localhost:8080").is_ok());
     }
 }

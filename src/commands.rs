@@ -505,12 +505,14 @@ fn decrypt_cipher(cipher: &Cipher, keys: &CryptoKeys) -> Result<CipherOutput> {
     })
 }
 
-fn find_cipher_output(
+fn collect_matching_cipher_outputs(
     ciphers: &[Cipher],
     runtime_keys: &RuntimeKeys,
     mut predicate: impl FnMut(&CipherOutput) -> bool,
     matches_filters: impl Fn(&Cipher) -> bool,
-) -> Option<CipherOutput> {
+) -> Vec<CipherOutput> {
+    let mut matches = Vec::new();
+
     for cipher in ciphers {
         if !matches_filters(cipher) {
             continue;
@@ -524,11 +526,23 @@ fn find_cipher_output(
         if let Ok(output) = decrypt_cipher(cipher, &keys)
             && predicate(&output)
         {
-            return Some(output);
+            matches.push(output);
         }
     }
 
-    None
+    matches
+}
+
+fn require_single_cipher_output(
+    mut matches: Vec<CipherOutput>,
+    not_found_message: impl FnOnce() -> String,
+    ambiguous_message: impl FnOnce(usize) -> String,
+) -> Result<CipherOutput> {
+    match matches.len() {
+        0 => anyhow::bail!(not_found_message()),
+        1 => Ok(matches.pop().expect("one match should be present")),
+        count => anyhow::bail!(ambiguous_message(count)),
+    }
 }
 
 fn output_matches_search(output: &CipherOutput, search_lower: &str) -> bool {
@@ -574,6 +588,23 @@ fn sanitize_env_name(name: &str) -> String {
     normalized
 }
 
+fn push_env_var(
+    vars: &mut Vec<(String, String)>,
+    seen: &mut HashMap<String, ()>,
+    name: String,
+    value: String,
+) -> Result<()> {
+    if seen.insert(name.clone(), ()).is_some() {
+        anyhow::bail!(
+            "Environment variable collision on '{}'. Rename vault items or fields to keep injected environment names unique.",
+            name
+        );
+    }
+
+    vars.push((name, value));
+    Ok(())
+}
+
 fn escape_value(value: &str) -> String {
     let mut result = String::with_capacity(value.len());
     for c in value.chars() {
@@ -585,38 +616,69 @@ fn escape_value(value: &str) -> String {
     result
 }
 
-fn cipher_to_env_vars(output: &CipherOutput) -> Vec<(String, String)> {
-    let prefix = sanitize_env_name(&output.name);
-    let mut vars: Vec<(String, String)> = Vec::new();
+fn collect_env_vars(outputs: &[CipherOutput]) -> Result<Vec<(String, String)>> {
+    let mut vars = Vec::new();
+    let mut seen = HashMap::new();
 
-    if let Some(v) = &output.uri {
-        vars.push((format!("{}_URI", prefix), v.clone()));
-    }
-    if let Some(v) = &output.username {
-        vars.push((format!("{}_USERNAME", prefix), v.clone()));
-    }
-    if let Some(v) = &output.password {
-        vars.push((format!("{}_PASSWORD", prefix), v.clone()));
-    }
-    if let Some(v) = &output.ssh_public_key {
-        vars.push((format!("{}_SSH_PUBLIC_KEY", prefix), v.clone()));
-    }
-    if let Some(v) = &output.ssh_private_key {
-        vars.push((format!("{}_SSH_PRIVATE_KEY", prefix), v.clone()));
-    }
-    if let Some(v) = &output.ssh_fingerprint {
-        vars.push((format!("{}_SSH_FINGERPRINT", prefix), v.clone()));
-    }
-    if let Some(fields) = &output.fields {
-        for field in fields {
-            vars.push((
-                format!("{}_{}", prefix, sanitize_env_name(&field.name)),
-                field.value.clone(),
-            ));
+    for output in outputs {
+        let prefix = sanitize_env_name(&output.name);
+
+        if let Some(v) = &output.uri {
+            push_env_var(&mut vars, &mut seen, format!("{}_URI", prefix), v.clone())?;
+        }
+        if let Some(v) = &output.username {
+            push_env_var(
+                &mut vars,
+                &mut seen,
+                format!("{}_USERNAME", prefix),
+                v.clone(),
+            )?;
+        }
+        if let Some(v) = &output.password {
+            push_env_var(
+                &mut vars,
+                &mut seen,
+                format!("{}_PASSWORD", prefix),
+                v.clone(),
+            )?;
+        }
+        if let Some(v) = &output.ssh_public_key {
+            push_env_var(
+                &mut vars,
+                &mut seen,
+                format!("{}_SSH_PUBLIC_KEY", prefix),
+                v.clone(),
+            )?;
+        }
+        if let Some(v) = &output.ssh_private_key {
+            push_env_var(
+                &mut vars,
+                &mut seen,
+                format!("{}_SSH_PRIVATE_KEY", prefix),
+                v.clone(),
+            )?;
+        }
+        if let Some(v) = &output.ssh_fingerprint {
+            push_env_var(
+                &mut vars,
+                &mut seen,
+                format!("{}_SSH_FINGERPRINT", prefix),
+                v.clone(),
+            )?;
+        }
+        if let Some(fields) = &output.fields {
+            for field in fields {
+                push_env_var(
+                    &mut vars,
+                    &mut seen,
+                    format!("{}_{}", prefix, sanitize_env_name(&field.name)),
+                    field.value.clone(),
+                )?;
+            }
         }
     }
 
-    vars
+    Ok(vars)
 }
 
 fn get_field_string(field: &Option<String>, name: &str) -> Result<String> {
@@ -630,7 +692,7 @@ fn format_cipher_output(output: &CipherOutput, format: &str) -> Result<String> {
     match format {
         "json" => Ok(serde_json::to_string_pretty(output)?),
         "env" => {
-            let lines: String = cipher_to_env_vars(output)
+            let lines: String = collect_env_vars(std::slice::from_ref(output))?
                 .into_iter()
                 .map(|(name, value)| format!("export {}=\"{}\"\n", name, escape_value(&value)))
                 .collect();
@@ -775,13 +837,21 @@ pub async fn get(
         decrypt_cipher(cipher, &keys)?
     } else {
         let item_lower = item.to_lowercase();
-        find_cipher_output(
-            &ctx.sync_response.ciphers,
-            &ctx.keys,
-            |o| o.name.to_lowercase() == item_lower,
-            matches,
-        )
-        .with_context(|| format!("Item '{}' not found", item))?
+        require_single_cipher_output(
+            collect_matching_cipher_outputs(
+                &ctx.sync_response.ciphers,
+                &ctx.keys,
+                |o| o.name.to_lowercase() == item_lower,
+                matches,
+            ),
+            || format!("Item '{}' not found", item),
+            |count| {
+                format!(
+                    "Item '{}' matched {} ciphers. Use a unique ID or narrower filters.",
+                    item, count
+                )
+            },
+        )?
     };
 
     print_cipher_output(&output, format)
@@ -815,25 +885,33 @@ pub async fn get_by_uri(
         .transpose()?;
 
     let uri_lower = uri.to_lowercase();
-    let output = find_cipher_output(
-        &ctx.sync_response.ciphers,
-        &ctx.keys,
-        |o| {
-            o.uri
-                .as_ref()
-                .map(|u| u.to_lowercase().contains(&uri_lower))
-                .unwrap_or(false)
-        },
-        |c| {
-            cipher_matches_filters(
-                c,
-                org_id_filter.as_deref(),
-                collection_id_filter.as_deref(),
-                None,
+    let output = require_single_cipher_output(
+        collect_matching_cipher_outputs(
+            &ctx.sync_response.ciphers,
+            &ctx.keys,
+            |o| {
+                o.uri
+                    .as_ref()
+                    .map(|u| u.to_lowercase().contains(&uri_lower))
+                    .unwrap_or(false)
+            },
+            |c| {
+                cipher_matches_filters(
+                    c,
+                    org_id_filter.as_deref(),
+                    collection_id_filter.as_deref(),
+                    None,
+                )
+            },
+        ),
+        || format!("No item found with URI containing '{}'", uri),
+        |count| {
+            format!(
+                "URI selector '{}' matched {} ciphers. Narrow the selector or apply stricter filters.",
+                uri, count
             )
         },
-    )
-    .with_context(|| format!("No item found with URI containing '{}'", uri))?;
+    )?;
 
     print_cipher_output(&output, format)
 }
@@ -929,13 +1007,21 @@ pub async fn run_with_secrets(
         }
 
         let item_lower = name_or_id.to_lowercase();
-        find_cipher_output(
-            &ctx.sync_response.ciphers,
-            &ctx.keys,
-            |o| o.name.to_lowercase() == item_lower,
-            matches_filters,
+        require_single_cipher_output(
+            collect_matching_cipher_outputs(
+                &ctx.sync_response.ciphers,
+                &ctx.keys,
+                |o| o.name.to_lowercase() == item_lower,
+                matches_filters,
+            ),
+            || format!("Item '{}' not found", name_or_id),
+            |count| {
+                format!(
+                    "Item '{}' matched {} ciphers. Use a unique ID or narrower filters.",
+                    name_or_id, count
+                )
+            },
         )
-        .with_context(|| format!("Item '{}' not found", name_or_id))
     };
 
     let outputs: Vec<CipherOutput> = if request.search_by_uri {
@@ -945,8 +1031,8 @@ pub async fn run_with_secrets(
             .context("URI is required for URI search")?;
         let uri_lower = uri.to_lowercase();
 
-        vec![
-            find_cipher_output(
+        vec![require_single_cipher_output(
+            collect_matching_cipher_outputs(
                 &ctx.sync_response.ciphers,
                 &ctx.keys,
                 |o| {
@@ -956,9 +1042,15 @@ pub async fn run_with_secrets(
                         .unwrap_or(false)
                 },
                 matches_filters,
-            )
-            .with_context(|| format!("No item found with URI containing '{}'", uri))?,
-        ]
+            ),
+            || format!("No item found with URI containing '{}'", uri),
+            |count| {
+                format!(
+                    "URI selector '{}' matched {} ciphers. Narrow the selector or apply stricter filters.",
+                    uri, count
+                )
+            },
+        )?]
     } else if !request.requested_items.is_empty() {
         request
             .requested_items
@@ -984,10 +1076,7 @@ pub async fn run_with_secrets(
         outputs
     };
 
-    let mut env_vars = Vec::new();
-    for output in outputs {
-        env_vars.extend(cipher_to_env_vars(&output));
-    }
+    let env_vars = collect_env_vars(&outputs)?;
 
     if request.info_only {
         let names: Vec<String> = env_vars.iter().map(|(name, _)| name.clone()).collect();
@@ -1613,17 +1702,19 @@ fn decrypt_cipher_to_write_input(cipher: &Cipher, keys: &CryptoKeys) -> Result<W
     if let Some(fields) = cipher.get_fields() {
         let mut decrypted_fields = Vec::new();
         for field in fields {
-            let Some(name) = field
+            let name = field
                 .name
                 .as_ref()
-                .and_then(|n| keys.decrypt_to_string(n).ok())
-            else {
-                continue;
-            };
+                .context("Existing field is missing a name")?;
+            let name = keys
+                .decrypt_to_string(name)
+                .context("Failed to decrypt existing field name")?;
             let value = field
                 .value
                 .as_ref()
-                .and_then(|v| keys.decrypt_to_string(v).ok());
+                .map(|v| keys.decrypt_to_string(v))
+                .transpose()
+                .context("Failed to decrypt existing field value")?;
             decrypted_fields.push(crate::models::WriteFieldV1 {
                 name,
                 value,
@@ -1650,30 +1741,42 @@ fn decrypt_cipher_to_write_input(cipher: &Cipher, keys: &CryptoKeys) -> Result<W
                 .as_ref()
                 .map(|uris| {
                     uris.iter()
-                        .filter_map(|u| {
-                            let uri = u.uri.as_ref()?;
-                            let decrypted = keys.decrypt_to_string(uri).ok()?;
-                            Some(crate::models::WriteUriV1 {
+                        .map(|u| {
+                            let uri = u
+                                .uri
+                                .as_ref()
+                                .context("Existing login URI is missing a value")?;
+                            let decrypted = keys
+                                .decrypt_to_string(uri)
+                                .context("Failed to decrypt existing login URI")?;
+                            Ok(crate::models::WriteUriV1 {
                                 uri: decrypted,
                                 r#match: u.r#match,
                             })
                         })
-                        .collect::<Vec<_>>()
+                        .collect::<Result<Vec<_>>>()
                 })
+                .transpose()?
                 .filter(|v| !v.is_empty());
             input.login = Some(crate::models::WriteLoginV1 {
                 username: login
                     .username
                     .as_ref()
-                    .and_then(|u| keys.decrypt_to_string(u).ok()),
+                    .map(|u| keys.decrypt_to_string(u))
+                    .transpose()
+                    .context("Failed to decrypt existing login username")?,
                 password: login
                     .password
                     .as_ref()
-                    .and_then(|p| keys.decrypt_to_string(p).ok()),
+                    .map(|p| keys.decrypt_to_string(p))
+                    .transpose()
+                    .context("Failed to decrypt existing login password")?,
                 totp: login
                     .totp
                     .as_ref()
-                    .and_then(|t| keys.decrypt_to_string(t).ok()),
+                    .map(|t| keys.decrypt_to_string(t))
+                    .transpose()
+                    .context("Failed to decrypt existing login TOTP")?,
                 uris,
             });
         }
@@ -1901,6 +2004,59 @@ mod write_tests {
         CryptoKeys::from_symmetric_key(&raw).expect("valid key material")
     }
 
+    fn runtime_keys() -> RuntimeKeys {
+        RuntimeKeys {
+            user: test_keys(),
+            org: HashMap::new(),
+        }
+    }
+
+    fn encrypt(keys: &CryptoKeys, value: &str) -> String {
+        keys.encrypt_string(value)
+            .expect("encryption should succeed")
+    }
+
+    fn login_cipher(
+        keys: &CryptoKeys,
+        id: &str,
+        name: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        uri: Option<&str>,
+        fields: Option<Vec<crate::models::FieldData>>,
+    ) -> Cipher {
+        Cipher {
+            id: id.to_string(),
+            r#type: CipherType::Login as u8,
+            organization_id: None,
+            key: None,
+            revision_date: Some("2026-04-21T00:00:00.000000Z".to_string()),
+            favorite: Some(false),
+            reprompt: Some(0),
+            name: Some(encrypt(keys, name)),
+            notes: None,
+            folder_id: None,
+            login: Some(crate::models::LoginData {
+                username: username.map(|value| encrypt(keys, value)),
+                password: password.map(|value| encrypt(keys, value)),
+                totp: None,
+                uris: uri.map(|value| {
+                    vec![crate::models::UriData {
+                        uri: Some(encrypt(keys, value)),
+                        r#match: None,
+                    }]
+                }),
+            }),
+            card: None,
+            identity: None,
+            secure_note: None,
+            ssh_key: None,
+            collection_ids: Vec::new(),
+            fields,
+            data: None,
+        }
+    }
+
     #[test]
     fn split_password_and_json_requires_two_segments() {
         assert!(split_password_and_json("just-password").is_err());
@@ -1961,6 +2117,155 @@ mod write_tests {
             payload["login"]["password"]
                 .as_str()
                 .is_some_and(|s| s.starts_with("2."))
+        );
+    }
+
+    #[test]
+    fn require_single_cipher_output_rejects_ambiguous_matches() {
+        let runtime_keys = runtime_keys();
+        let ciphers = vec![
+            login_cipher(
+                &runtime_keys.user,
+                "cipher-1",
+                "svc/api",
+                Some("bot-a"),
+                Some("pw-a"),
+                Some("https://example.com"),
+                None,
+            ),
+            login_cipher(
+                &runtime_keys.user,
+                "cipher-2",
+                "svc/api",
+                Some("bot-b"),
+                Some("pw-b"),
+                Some("https://example.com"),
+                None,
+            ),
+        ];
+
+        let err = require_single_cipher_output(
+            collect_matching_cipher_outputs(
+                &ciphers,
+                &runtime_keys,
+                |output| output.name == "svc/api",
+                |_| true,
+            ),
+            || "missing".to_string(),
+            |count| format!("matched {count} ciphers"),
+        )
+        .expect_err("ambiguous lookups should fail closed");
+
+        assert!(err.to_string().contains("matched 2 ciphers"));
+    }
+
+    #[test]
+    fn collect_env_vars_rejects_colliding_names() {
+        let outputs = vec![
+            CipherOutput {
+                id: "1".to_string(),
+                cipher_type: "login".to_string(),
+                name: "svc/api".to_string(),
+                username: None,
+                password: Some("pw-a".to_string()),
+                uri: None,
+                notes: None,
+                fields: None,
+                ssh_public_key: None,
+                ssh_private_key: None,
+                ssh_fingerprint: None,
+            },
+            CipherOutput {
+                id: "2".to_string(),
+                cipher_type: "login".to_string(),
+                name: "svc-api".to_string(),
+                username: None,
+                password: Some("pw-b".to_string()),
+                uri: None,
+                notes: None,
+                fields: None,
+                ssh_public_key: None,
+                ssh_private_key: None,
+                ssh_fingerprint: None,
+            },
+        ];
+
+        let err = collect_env_vars(&outputs).expect_err("collisions should be rejected");
+        assert!(err.to_string().contains("SVC_API_PASSWORD"));
+    }
+
+    #[test]
+    fn collect_env_vars_rejects_field_collisions() {
+        let outputs = vec![CipherOutput {
+            id: "1".to_string(),
+            cipher_type: "login".to_string(),
+            name: "svc/api".to_string(),
+            username: None,
+            password: Some("pw-a".to_string()),
+            uri: None,
+            notes: None,
+            fields: Some(vec![FieldOutput {
+                name: "password".to_string(),
+                value: "shadow".to_string(),
+                hidden: true,
+            }]),
+            ssh_public_key: None,
+            ssh_private_key: None,
+            ssh_fingerprint: None,
+        }];
+
+        let err = collect_env_vars(&outputs).expect_err("field collisions should be rejected");
+        assert!(err.to_string().contains("SVC_API_PASSWORD"));
+    }
+
+    #[test]
+    fn decrypt_cipher_to_write_input_fails_on_field_decrypt_errors() {
+        let keys = test_keys();
+        let cipher = login_cipher(
+            &keys,
+            "cipher-1",
+            "svc/api",
+            Some("bot"),
+            Some("pw"),
+            Some("https://example.com"),
+            Some(vec![crate::models::FieldData {
+                name: Some(encrypt(&keys, "api_key")),
+                value: Some("not-valid-ciphertext".to_string()),
+                r#type: 1,
+            }]),
+        );
+
+        let err = decrypt_cipher_to_write_input(&cipher, &keys)
+            .expect_err("field decrypt failures should abort helper writes");
+        assert!(
+            err.to_string()
+                .contains("Failed to decrypt existing field value")
+        );
+    }
+
+    #[test]
+    fn decrypt_cipher_to_write_input_fails_on_login_decrypt_errors() {
+        let keys = test_keys();
+        let mut cipher = login_cipher(
+            &keys,
+            "cipher-1",
+            "svc/api",
+            Some("bot"),
+            Some("pw"),
+            Some("https://example.com"),
+            None,
+        );
+        cipher
+            .login
+            .as_mut()
+            .expect("login should be present")
+            .username = Some("not-valid-ciphertext".to_string());
+
+        let err = decrypt_cipher_to_write_input(&cipher, &keys)
+            .expect_err("login decrypt failures should abort helper writes");
+        assert!(
+            err.to_string()
+                .contains("Failed to decrypt existing login username")
         );
     }
 }
